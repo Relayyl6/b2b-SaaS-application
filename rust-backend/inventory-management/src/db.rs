@@ -1,4 +1,5 @@
-use sqlx::{PgPool, FromRow};
+// src/db.rs
+use sqlx::PgPool;
 use uuid::Uuid;
 use crate::models::{Inventory, UpdateStockRequest};
 
@@ -26,7 +27,7 @@ impl InventoryRepo {
         supplier_id: Uuid,
         req: &UpdateStockRequest,
     ) -> Result<Inventory, sqlx::Error> {
-        let updated = sqlx::query_as::<_, Inventory>(
+        sqlx::query_as::<_, Inventory>(
             r#"
             UPDATE inventory
             SET quantity = GREATEST(0, quantity + $1), updated_at = NOW()
@@ -38,8 +39,45 @@ impl InventoryRepo {
         .bind(supplier_id)
         .bind(req.product_id)
         .fetch_one(&self.pool)
-        .await?;
-
-        Ok(updated)
+        .await
     }
+
+    pub async fn create_inventory_item(
+        &self,
+        req: &crate::models::CreateInventoryRequest,
+    ) -> Result<Inventory, sqlx::Error> {
+        sqlx::query_as::<_, Inventory>(
+            r#"
+            INSERT INTO inventory (supplier_id, product_id, name, quantity, low_stock_threshold, unit)
+            VALUES ($1, $2, $3, $4, $5, $6)
+            RETURNING *
+            "#
+        )
+        .bind(req.supplier_id)
+        .bind(req.product_id)
+        .bind(&req.name)
+        .bind(req.quantity)
+        .bind(req.low_stock_threshold)
+        .bind(&req.unit)
+        .fetch_one(&self.pool)
+        .await
+    }
+
+    pub async fn get_one(
+        &self,
+        supplier_id: Uuid,
+        product_id: Uuid,
+    ) -> Result<Inventory, sqlx::Error> {
+        sqlx::query_as::<_, Inventory>(
+            r#"
+            SELECT * FROM inventory
+            WHERE supplier_id = $1 AND product_id = $2
+            "#,
+        )
+        .bind(supplier_id)
+        .bind(product_id)
+        .fetch_one(&self.pool)
+        .await
+    }
+
 }
