@@ -84,6 +84,15 @@ GET http://localhost:3002/inventory/11111111-1111-1111-1111-111111111111
     "low_stock_threshold": 10,
     "unit": "bags",
     "updated_at": "2025-11-01T14:00:00Z"
+  },
+  {
+    "product_id": "33333333-3333-3333-3333-333333333333",
+    "supplier_id": "11111111-1111-1111-1111-111111111111",
+    "name": "Rice bag",
+    "quantity": 50,
+    "low_stock_threshold": 10,
+    "unit": "bags",
+    "updated_at": "2025-11-01T14:00:00Z"
   }
 ]
 ```
