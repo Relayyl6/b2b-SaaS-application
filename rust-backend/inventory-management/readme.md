@@ -34,6 +34,7 @@ Redis is optionally used for event publishing and cache invalidation.
    ```bash
    DATABASE_URL=postgres://username:password@localhost/inventory_db
    REDIS_URL=redis://localhost:6379
+   SERVICE_PORT=3002
    ```
 
 3. **Run database migrations**
