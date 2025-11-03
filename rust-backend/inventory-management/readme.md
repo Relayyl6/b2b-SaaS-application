@@ -25,7 +25,7 @@ Redis is optionally used for event publishing and cache invalidation.
    ```bash
    git clone <repo-url>
    cd inventory-service
-  ```
+   ```
 
 2. **Set up environment variables**
 
