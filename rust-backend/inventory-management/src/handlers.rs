@@ -106,3 +106,40 @@ pub async fn update_stock(
         }
     }
 }
+
+pub async fn delete_product(
+    repo: web::Data<InventoryRepo>,
+    redis_pub: web::Data<RedisPublisher>,
+    redis_client: web::Data<redis::Client>,
+    path: web::Path<(Uuid, Uuid)>, // supplier_id and product_id
+) -> impl Responder {
+    let (supplier_id, product_id) = path.into_inner();
+
+    match repo.delete_product(supplier_id, product_id).await {
+        Ok(rows_affected) if rows_affected > 0 => {
+            // Publish deletion event
+            let event = serde_json::json!({
+                "product_id": product_id,
+                "supplier_id": supplier_id,
+                "deleted": true
+            });
+
+            redis_pub.publish(&event, "inventory.deleted").await.unwrap();
+
+            // Invalidate cache
+            // let mut conn = redis_client.get_multiplexed_async_connection().await.unwrap();
+            // let cache_key = format!("inventory:supplier:{}", supplier_id);
+            // let _: () = conn.del(cache_key).await.unwrap();
+
+            // Invalidate cache
+            if let Ok(mut conn) = redis_client.get_multiplexed_async_connection().await {
+                let cache_key = format!("inventory:supplier:{}", supplier_id);
+                let _: Result<(), _> = conn.del(cache_key).await;
+            }
+
+            HttpResponse::Ok().body("Product deleted successfully")
+        }
+        Ok(_) => HttpResponse::NotFound().body("Product not found"),
+        Err(_) => HttpResponse::InternalServerError().body("Failed to delete product"),
+    }
+}

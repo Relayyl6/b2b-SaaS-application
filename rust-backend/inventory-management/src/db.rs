@@ -80,4 +80,20 @@ impl InventoryRepo {
         .await
     }
 
+    pub async fn delete_product(
+        &self,
+        supplier_id: Uuid,
+        product_id: Uuid,
+    ) -> Result<u64, sqlx::Error> {
+        let result = sqlx::query!(
+            "DELETE FROM inventory WHERE supplier_id = $1 AND product_id = $2",
+            supplier_id,
+            product_id
+        )
+        .execute(&self.pool)
+        .await?;
+    
+        Ok(result.rows_affected())
+    }
+
 }

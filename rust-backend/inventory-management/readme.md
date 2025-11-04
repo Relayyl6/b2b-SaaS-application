@@ -22,10 +22,10 @@ Redis is optionally used for event publishing and cache invalidation.
 ## ⚙️ Project Setup
 
 1. **Clone the repository**
-   ```bash
-   git clone <repo-url>
-   cd inventory-service
-  ```
+    ```bash
+    git clone <repo-url>
+    cd inventory-service
+    ```
 
 2. **Set up environment variables**
 
@@ -34,6 +34,7 @@ Redis is optionally used for event publishing and cache invalidation.
    ```bash
    DATABASE_URL=postgres://username:password@localhost/inventory_db
    REDIS_URL=redis://localhost:6379
+   SERVICE_PORT=3002
    ```
 
 3. **Run database migrations**
@@ -86,7 +87,7 @@ GET http://localhost:3002/inventory/11111111-1111-1111-1111-111111111111
     "updated_at": "2025-11-01T14:00:00Z"
   },
   {
-    "product_id": "33333333-3333-3333-3333-333333333333",
+    "product_id": "22222222-2222-2222-2222-222222222222",
     "supplier_id": "11111111-1111-1111-1111-111111111111",
     "name": "Rice bag",
     "quantity": 50,

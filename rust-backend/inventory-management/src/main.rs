@@ -41,6 +41,10 @@ async fn main() -> std::io::Result<()> {
             )
             .route("/inventory/{supplier_id}", web::get().to(handlers::get_inventory))
             .route("/inventory/{supplier_id}/update", web::post().to(handlers::update_stock))
+            .route(
+                "/inventory/{supplier_id}/{product_id}",
+                web::delete().to(handlers::delete_product),
+            )
     })
     .bind(format!("0.0.0.0:{}", port))?
     .run()

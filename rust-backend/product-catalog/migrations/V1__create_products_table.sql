@@ -1,0 +1,20 @@
+-- V1__create_products_table.sql
+CREATE EXTENSION IF NOT EXISTS "pgcrypto"; -- for gen_random_uuid()
+
+CREATE TABLE products (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    supplier_id UUID NOT NULL,
+    name TEXT NOT NULL,
+    description TEXT,
+    category TEXT NOT NULL,
+    price NUMERIC(12,2) NOT NULL DEFAULT 0.00,
+    unit TEXT NOT NULL,
+    available BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE(supplier_id, name)
+);
+
+CREATE INDEX idx_products_supplier ON products(supplier_id);
+CREATE INDEX idx_products_category ON products(category);
+CREATE INDEX idx_products_price ON products(price);
