@@ -1,6 +1,7 @@
 // src/redis_pub.rs
 use redis::{AsyncCommands, Client};
 use crate::models::StockUpdateEvent;
+use redis::Client as RedisClient;
 
 #[derive(Clone)]
 pub struct RedisPublisher {

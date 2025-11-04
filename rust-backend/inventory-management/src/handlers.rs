@@ -5,6 +5,13 @@ use crate::db::InventoryRepo;
 use crate::redis_pub::RedisPublisher;
 use redis::AsyncCommands;
 
+
+// #[derive(Deserialize)]
+// pub struct UpdateQuantity {
+//     product_id: Uuid,
+//     quantity_change: i32,
+// }
+
 pub async fn get_inventory(
     repo: web::Data<InventoryRepo>,
     path: web::Path<Uuid>,
