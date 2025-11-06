@@ -4,7 +4,14 @@ use crate::models::{UpdateStockRequest, StockUpdateEvent, CreateInventoryRequest
 use crate::db::InventoryRepo;
 use crate::redis_pub::RedisPublisher;
 use redis::AsyncCommands;
+use serde::{Serialize, Deserialize};
 
+#[derive(Serialize, Deserialize, Debug)]
+pub struct ProductDeletedEvent {
+    pub product_id: Uuid,
+    pub supplier_id: Uuid,
+    pub deleted: bool,
+}
 
 // #[derive(Deserialize)]
 // pub struct UpdateQuantity {
@@ -125,13 +132,13 @@ pub async fn delete_product(
     match repo.delete_product(supplier_id, product_id).await {
         Ok(rows_affected) if rows_affected > 0 => {
             // Publish deletion event
-            let event = serde_json::json!({
-                "product_id": product_id,
-                "supplier_id": supplier_id,
-                "deleted": true
-            });
+            let event = ProductDeletedEvent {
+                product_id,
+                supplier_id,
+                deleted: true
+            };
 
-            redis_pub.publish(&event, "inventory.deleted").await.unwrap();
+            redis_pub.publish::<ProductDeletedEvent>(&event, "inventory.deleted").await.unwrap();
 
             // Invalidate cache
             // let mut conn = redis_client.get_multiplexed_async_connection().await.unwrap();

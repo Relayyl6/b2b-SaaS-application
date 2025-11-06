@@ -15,5 +15,5 @@ redis = { version = "0.25", features = ["tokio-comp"] }
 log = "0.4"
 env_logger = "0.10"
 chrono = { version = "0.4", features = ["serde", "clock" ] }  # For timestamps
-[dependencies]
 reqwest = { version = "0.12", features = ["json"] }
+futures-util = "0.3.31"

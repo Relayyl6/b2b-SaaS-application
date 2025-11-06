@@ -9,8 +9,8 @@ pub struct InventoryRepo {
 }
 
 impl InventoryRepo {
-    pub fn new(pool: PgPool) -> Self {
-        Self { pool }
+    pub fn new(pool: &PgPool) -> Self {
+        Self { pool: pool.clone() }
     }
 
     pub async fn get_by_supplier(&self, supplier_id: Uuid) -> Result<Vec<Inventory>, sqlx::Error> {

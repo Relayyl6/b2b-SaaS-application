@@ -1,22 +1,24 @@
 use sqlx::PgPool;
 use uuid::Uuid;
 use reqwest::Client;
+use std::env;
+use serde::{Serialize, Deserialize};
 
-struct ProductEvent {
-    event_type: String, // e.g. "product.created"
-    product_id: Uuid,
-    supplier_id: Uuid,
-    name: String,
-    quantity: Option<i32>,
-    low_stock_threshold: Option<i32>,
-    unit: Option<String>,
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ProductEvent {
+    pub event_type: String,
+    pub product_id: Uuid,
+    pub supplier_id: Uuid,
+    pub name: String,
+    pub quantity: Option<i32>,
+    pub low_stock_threshold: Option<i32>,
+    pub unit: Option<String>,
+    pub quantity_change: Option<i32>,
 }
 
-// Create a new product in inventory when the Product Catalog announces a new one
-pub async fn create_product_from_event(pool: &PgPool, event: ProductEvent) -> Result<()> {
+pub async fn create_product_from_event(_pool: &PgPool, event: ProductEvent) -> Result<(), Box<dyn std::error::Error>> {
     let client = Client::new();
     let service_url = env::var("INVENTORY_SERVICE_URL").unwrap_or_else(|_| "http://localhost:3002".into());
-
     let url = format!("{}/inventory", service_url);
 
     let resp = client
@@ -41,11 +43,9 @@ pub async fn create_product_from_event(pool: &PgPool, event: ProductEvent) -> Re
     Ok(())
 }
 
-// Update an existing product (like when product catalog changes its name, unit, etc.)
-pub async fn update_product_from_event(pool: &PgPool, event: ProductEvent) -> Result<()> {
+pub async fn update_product_from_event(_pool: &PgPool, event: ProductEvent) -> Result<(), Box<dyn std::error::Error>> {
     let client = Client::new();
     let service_url = env::var("INVENTORY_SERVICE_URL").unwrap_or_else(|_| "http://localhost:3002".into());
-
     let url = format!("{}/inventory/{}/update", service_url, event.supplier_id);
 
     let resp = client
@@ -66,11 +66,9 @@ pub async fn update_product_from_event(pool: &PgPool, event: ProductEvent) -> Re
     Ok(())
 }
 
-// Delete a product when Product Catalog says it's deleted
-pub async fn delete_product_from_event(pool: &PgPool, event: ProductEvent) -> Result<()> {
+pub async fn delete_product_from_event(_pool: &PgPool, event: ProductEvent) -> Result<(), Box<dyn std::error::Error>> {
     let client = Client::new();
     let service_url = env::var("INVENTORY_SERVICE_URL").unwrap_or_else(|_| "http://localhost:3002".into());
-
     let url = format!("{}/inventory/{}/{}", service_url, event.supplier_id, event.product_id);
 
     let resp = client.delete(&url).send().await?;

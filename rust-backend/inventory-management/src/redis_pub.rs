@@ -1,7 +1,6 @@
 // src/redis_pub.rs
 use redis::{AsyncCommands, Client};
-use crate::models::StockUpdateEvent;
-use redis::Client as RedisClient;
+use serde::Serialize;
 
 #[derive(Clone)]
 pub struct RedisPublisher {
@@ -13,7 +12,11 @@ impl RedisPublisher {
         Self { client: Client::open(url).unwrap() }
     }
 
-    pub async fn publish(&self, event: &StockUpdateEvent, channel: &str) -> Result<(), redis::RedisError> {
+    pub async fn publish<T: Serialize>(
+        &self,
+        event: &T,
+        channel: &str
+    ) -> Result<(), redis::RedisError> {
         let payload = serde_json::to_string(event).unwrap();
         let mut conn = self.client.get_multiplexed_async_connection().await?;
         conn.publish(channel, payload).await

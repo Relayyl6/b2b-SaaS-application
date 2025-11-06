@@ -3,14 +3,15 @@ mod models;
 mod db;
 mod redis_pub;
 mod handlers;
+mod redis_sub;
 
 use actix_web::{web, App, HttpServer};
 use dotenvy::dotenv;
 use std::env;
 use tokio::spawn;
 use sqlx::postgres::PgPoolOptions;
-use redis::Client as RedisClient;
-use crate::redis_sub::listen_to_redis_events
+use redis::Client;
+use crate::redis_sub::listen_to_redis_events;
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
@@ -27,19 +28,22 @@ async fn main() -> std::io::Result<()> {
         .connect(&db_url)
         .await
         .expect("postgres");
-    sqlx::migrate!("./migrations").run(&pool).await.unwrap();
+    if let Err(e) = sqlx::migrate!("./migrations").run(&pool).await {
+        eprintln!("❌ Migration failed: {:?}", e);
+        std::process::exit(1);
+    }
 
-    let repo = web::Data::new(db::InventoryRepo::new(pool));
+    let repo = web::Data::new(db::InventoryRepo::new(&pool));
     let redis_pub = web::Data::new(redis_pub::RedisPublisher::new(&redis_url));
-    let redis_client = web::Data::new(RedisClient::open(redis_url).unwrap());
+    let redis_client = web::Data::new(Client::open(redis_url).unwrap());
 
     // let redis_client = redis::Client::open(redis_url).expect("Failed to create Redis client");   
-    let redis_conn = redis_client.get_async_connection().await.expect("Redis connection failed");
+    let _redis_conn = redis_client.get_async_connection().await.expect("Redis connection failed");
 
     // spawn Redis listener in background
     let pool_clone = pool.clone();
     spawn(async move {
-        listen_to_redis_events(pool_clone).await;
+        let _ = listen_to_redis_events(pool_clone).await;
     });
 
     println!("Inventory Service running on http://localhost:{}", port);
