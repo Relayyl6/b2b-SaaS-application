@@ -17,6 +17,8 @@ A Rust-based microservice for managing product data. It provides CRUD operations
   - [API Endpoints](#api-endpoints)
   - [Example Requests](#example-requests)
   - [Event Publishing](#event-publishing)
+    - [Environment Variables](#environment-variables-1)
+    - [Contributing](#contributing)
 
 ---
 
@@ -44,7 +46,7 @@ A Rust-based microservice for managing product data. It provides CRUD operations
 1. Clone the repository:
 
 ```bash
-git clone https://github.com/your-org/product-catalog.git
+git clone https://github.com/relayyl6/product-catalog.git
 cd product-catalog
 ```
 
@@ -192,4 +194,91 @@ DELETE /products/{supplier_id}/{product_id}
 }
 ```
 
+Here’s a polished version you can put in your README under a “Configuration” or “Environment Variables” section:
+
 ---
+
+### Environment Variables
+
+Before running the service, create a `.env` file in the project root with the following values:
+
+```env
+# PostgreSQL connection URL
+DATABASE_URL=your_postgres_db
+
+# Redis connection URL
+REDIS_URL=redis://127.0.0.1:6379
+
+# Service port (default: 3003)
+SERVICE_PORT=3003
+```
+
+Here’s a concise, developer-friendly “Contributing” section you can add to your README:
+
+---
+
+### Contributing
+
+We welcome contributions to improve the Product Catalog service! Here’s how you can help:
+
+1. **Fork the Repository**
+   Click “Fork” at the top of the repository to create your own copy.
+
+2. **Clone Your Fork**
+
+   ```bash
+   git clone https://github.com/relayyl6/product-catalog.git
+   cd product-catalog
+   ```
+
+3. **Create a Feature Branch**
+
+   ```bash
+   git checkout -b feature/your-feature-name
+   ```
+
+4. **Set Up the Environment**
+
+   * Create a `.env` file as described in the configuration section.
+   * Ensure you have a running PostgreSQL database and Redis server.
+
+5. **Make Your Changes**
+
+   * Implement new features, fix bugs, or improve documentation.
+   * Example areas for contribution:
+
+     * Adding support for product images
+     * Improving Redis event handling
+     * Enhancing search functionality
+     * Fixing typos or documentation
+
+6. **Run Tests & Verify**
+   Make sure all existing and new tests pass. For example:
+
+   ```bash
+   cargo test
+   ```
+
+7. **Commit Your Changes**
+
+   ```bash
+   git add .
+   git commit -m "Add feature: your-feature-description"
+   ```
+
+8. **Push & Create a Pull Request**
+
+   ```bash
+   git push origin feature/your-feature-name
+   ```
+
+   * Go to your fork on GitHub and create a Pull Request to the main repository.
+   * Provide a clear description of your changes and why they are beneficial.
+
+9. **Iterate Based on Feedback**
+   Maintainers may request changes. Update your branch and push again until the PR is ready to merge.
+
+> 💡 **Tip:** Keep commits small and descriptive, and make sure your code follows Rust best practices.
+
+---
+
