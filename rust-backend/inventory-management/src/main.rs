@@ -37,7 +37,7 @@ async fn main() -> std::io::Result<()> {
     let redis_pub = web::Data::new(redis_pub::RedisPublisher::new(&redis_url));
     let redis_client = web::Data::new(Client::open(redis_url).unwrap());
 
-    // let redis_client = redis::Client::open(redis_url).expect("Failed to create Redis client");   
+    // let redis_client = redis::Client::open(redis_url).expect("Failed to create Redis client");
     let _redis_conn = redis_client.get_async_connection().await.expect("Redis connection failed");
 
     // spawn Redis listener in background

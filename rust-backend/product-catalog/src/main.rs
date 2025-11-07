@@ -25,19 +25,21 @@ async fn main() -> std::io::Result<()> {
 
     let repo = web::Data::new(ProductRepo::new(pool));
     // setup redis (optional)
-    let redis_pub = if let Some(url) = &redis_url {
-        match RedisPublisher::new(url).await {
+    let redis_pub = match &redis_url {
+        Some(url) => match RedisPublisher::new(url).await {
             Ok(pubw) => web::Data::new(pubw),
             Err(e) => {
-                eprintln!("Failed to connect to Redis: {:?}", e);
-                // fallback to panic or create a dummy? we'll panic to avoid silent failure
-                panic!("Redis connection failed")
+                eprintln!("⚠️ Failed to connect to Redis: {:?}", e);
+                eprintln!("⚠️ Continuing without Redis publishing capabilities...");
+                web::Data::new(RedisPublisher::new_noop())
             }
+        },
+        None => {
+            eprintln!("⚠️ No REDIS_URL configured — using no-op publisher");
+            web::Data::new(RedisPublisher::new_noop())
         }
-    } else {
-        // If you want a no-op publisher, implement it, for now panic if not configured.
-        panic!("REDIS_URL is required in this configuration for events")
     };
+
 
     let redis_client = web::Data::new(RedisClient::open(redis_url.unwrap()).expect("redis client"));
 

@@ -9,7 +9,7 @@ pub struct ProductEvent {
     pub event_type: String,
     pub product_id: Uuid,
     pub supplier_id: Uuid,
-    pub name: String,
+    pub name: Option<String>,
     pub quantity: Option<i32>,
     pub low_stock_threshold: Option<i32>,
     pub unit: Option<String>,
@@ -27,7 +27,7 @@ pub async fn create_product_from_event(_pool: &PgPool, event: ProductEvent) -> R
             "product_id": event.product_id,
             "supplier_id": event.supplier_id,
             "quantity": event.quantity.unwrap_or(0),
-            "name": event.name,
+            "name": event.name.clone().unwrap_or("Unnamed product".to_string()),
             "low_stock_threshold": event.low_stock_threshold.unwrap_or(5),
             "unit": event.unit.unwrap_or("unit".to_string())
         }))
@@ -35,7 +35,7 @@ pub async fn create_product_from_event(_pool: &PgPool, event: ProductEvent) -> R
         .await?;
 
     if resp.status().is_success() {
-        println!("✅({}) Created product {} via API route", event.event_type, event.name);
+        println!("✅({}) Created product {:?} via API route", event.event_type, event.name);
     } else {
         eprintln!("❌ Failed to create product: {:?}", resp.text().await?);
     }
@@ -58,7 +58,7 @@ pub async fn update_product_from_event(_pool: &PgPool, event: ProductEvent) -> R
         .await?;
 
     if resp.status().is_success() {
-        println!("🔁({}) Updated product {} via API route", event.event_type, event.name);
+        println!("🔁({}) Updated product {:?} via API route", event.event_type, event.name);
     } else {
         eprintln!("❌ Failed to update product: {:?}", resp.text().await?);
     }

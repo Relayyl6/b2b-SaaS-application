@@ -1,8 +1,9 @@
 use actix_web::{web, HttpResponse, Responder};
 use uuid::Uuid;
+use redis::AsyncCommands;
 use crate::db::ProductRepo;
 use crate::models::{CreateProductRequest, UpdateProductRequest, BulkCreateRequest, ProductEvent};
-use crate::models::Product;
+// use crate::models::Product;
 use crate::redis_pub::RedisPublisher;
 use sqlx;
 use redis;
@@ -15,8 +16,18 @@ pub async fn create_product(
 ) -> impl Responder {
     match repo.create_product(&req).await {
         Ok(product) => {
-            // publish event (best-effort)
-            let event = ProductEvent { id: product.id, supplier_id: product.supplier_id, event_type: "created".to_string() };
+            // publish event
+            let event = ProductEvent {
+                event_type: "product.created".to_string(),
+                product_id: product.product_id,
+                supplier_id: product.supplier_id,
+                name: Some(product.name.clone()),
+                quantity: Some(product.quantity),
+                low_stock_threshold: None,
+                unit: Some(product.unit.clone()),
+                quantity_change: None,
+            };
+
             if let Err(e) = redis_pub.publish("product.created", &event).await {
                 eprintln!("Redis publish error (product.created): {:?}", e);
             }
@@ -65,12 +76,32 @@ pub async fn update_product(
     req: web::Json<UpdateProductRequest>,
 ) -> impl Responder {
     let (supplier_id, product_id) = path.into_inner();
-    match repo.update_product(supplier_id, product_id, &req).await {
+
+    // If quantity_change is present, adjust quantity field accordingly before update
+    let mut update_data = req.into_inner();
+
+    if let Some(_change) = update_data.quantity_change {
+        // If quantity_change is set, ignore explicit quantity — it’ll be handled in SQL logic already
+        update_data.quantity = None;
+    }
+
+    match repo.update_product(supplier_id, product_id, &update_data).await {
         Ok(p) => {
-            let event = ProductEvent { id: p.id, supplier_id: p.supplier_id, event_type: "updated".to_string() };
+            let event = ProductEvent {
+                event_type: "product.updated".to_string(),
+                product_id: p.product_id,
+                supplier_id: p.supplier_id,
+                name: Some(p.name.clone()),
+                quantity: Some(p.quantity),
+                low_stock_threshold: None,
+                unit: Some(p.unit.clone()),
+                quantity_change: update_data.quantity_change,
+            };
+
             if let Err(e) = redis_pub.publish("product.updated", &event).await {
                 eprintln!("Redis publish error (product.updated): {:?}", e);
             }
+
             HttpResponse::Ok().json(p)
         }
         Err(sqlx::Error::RowNotFound) => HttpResponse::NotFound().body("Not found"),
@@ -80,6 +111,7 @@ pub async fn update_product(
         }
     }
 }
+
 
 pub async fn delete_product(
     repo: web::Data<ProductRepo>,
@@ -91,9 +123,14 @@ pub async fn delete_product(
     match repo.delete_product(supplier_id, product_id).await {
         Ok(rows) if rows > 0 => {
             let event = json!({
-                "id": product_id,
+                "event_type": "product.deleted",
+                "product_id": product_id,
                 "supplier_id": supplier_id,
-                "event_type": "deleted"
+                "name": "deleted", // either this or scatter the Inventory_microservice to satisfy goal. I choose lazy approach
+                "quantity": null,
+                "low_stock_threshold": null,
+                "unit": null,
+                "quantity_change": null
             });
 
             // publish - best-effort
@@ -126,10 +163,11 @@ pub async fn search_products(
     let min_price = query.get("min_price").and_then(|s| s.parse::<f64>().ok());
     let max_price = query.get("max_price").and_then(|s| s.parse::<f64>().ok());
     let supplier_id = query.get("supplier_id").and_then(|s| Uuid::parse_str(s).ok());
+    let product_id = query.get("product_id").and_then(|s| Uuid::parse_str(s).ok());
     let limit = query.get("limit").and_then(|s| s.parse::<i64>().ok()).unwrap_or(50);
     let offset = query.get("offset").and_then(|s| s.parse::<i64>().ok()).unwrap_or(0);
 
-    match repo.search_products(category, min_price, max_price, supplier_id, limit, offset).await {
+    match repo.search_products(category, min_price, max_price, supplier_id, product_id, limit, offset).await {
         Ok(rows) => HttpResponse::Ok().json(rows),
         Err(e) => {
             eprintln!("Search DB error: {:?}", e);
@@ -147,7 +185,17 @@ pub async fn bulk_create(
         Ok(created) => {
             // Optionally publish created events in a loop (or send a single aggregated event)
             for p in &created {
-                let event = ProductEvent { id: p.id, supplier_id: p.supplier_id, event_type: "created".to_string() };
+                let event = ProductEvent {
+                    event_type: "product.created".to_string(),
+                    product_id: p.product_id,
+                    supplier_id: p.supplier_id,
+                    name: Some(p.name.clone()),
+                    quantity: Some(p.quantity),
+                    low_stock_threshold: None,
+                    unit: Some(p.unit.clone()),
+                    quantity_change: None,
+                };
+
                 if let Err(e) = redis_pub.publish("product.created", &event).await {
                     eprintln!("Redis publish error in bulk: {:?}", e);
                 }

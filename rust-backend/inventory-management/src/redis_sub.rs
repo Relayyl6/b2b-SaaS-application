@@ -34,12 +34,18 @@ pub async fn listen_to_redis_events(pool: PgPool) -> Result<(), Box<dyn std::err
             };
         let mut pubsub = conn.into_pubsub();
 
-        if let Err(e) = pubsub.subscribe("product.events").await {
-                eprintln!("❌ Failed to subscribe: {:?}", e);
+        // Subscribe to all product channels in one go
+        for channel in &["product.created", "product.updated", "product.deleted"] {
+            if let Err(e) = pubsub.subscribe(channel).await {
+                eprintln!("❌ Failed to subscribe to {}: {:?}", channel, e);
+                // wait before retrying subscription
                 tokio::time::sleep(std::time::Duration::from_secs(5)).await;
                 continue;
             }
-        println!("📡 Subscribed to product.events");
+        }
+        
+        println!("📡 Subscribed to all product events");
+        
 
 
         let mut stream = pubsub.on_message();
