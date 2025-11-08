@@ -43,7 +43,7 @@ async fn main() -> std::io::Result<()> {
 
     let redis_client = web::Data::new(RedisClient::open(redis_url.unwrap()).expect("redis client"));
 
-    println!("Product Catalog Service running on :{}", port);
+    println!("Product Catalog Service running on localhost:{}", port);
 
     HttpServer::new(move || {
         App::new()

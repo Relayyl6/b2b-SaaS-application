@@ -79,12 +79,20 @@ pub async fn update_stock(
     match repo.update_stock(supplier_id, &req).await {
         Ok(inventory) => {
             let low_stock = inventory.quantity <= inventory.low_stock_threshold;
+
+            // Expanded event payload to reflect possible new product fields
             let event = StockUpdateEvent {
                 product_id: inventory.product_id,
                 supplier_id: inventory.supplier_id,
                 new_quantity: inventory.quantity,
-                change,
+                change: change,
                 low_stock,
+                name: Some(inventory.name.clone()),
+                description: Some(inventory.description.clone()),
+                category: Some(inventory.category.clone()),
+                price: Some(inventory.price.clone()),
+                unit: Some(inventory.unit.clone()),
+                available: Some(inventory.available.clone()),
             };
 
             // Publish to Redis channels
@@ -97,7 +105,7 @@ pub async fn update_stock(
                 }
             }
 
-            // Invalidate cache
+            // Invalidate cache for this supplier
             if let Ok(mut conn) = redis_client.get_multiplexed_async_connection().await {
                 let cache_key = format!("inventory:supplier:{}", supplier_id);
                 let _: Result<(), _> = conn.del(cache_key).await;

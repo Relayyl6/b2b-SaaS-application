@@ -273,6 +273,29 @@ src/
 
 ---
 
+### Environment Variables
+
+Before running the service, create a `.env` file in the project root with the following values:
+
+```env
+# PostgreSQL connection URL
+DATABASE_URL=your_postgres_db
+
+# Redis connection URL
+REDIS_URL=redis://127.0.0.1:6379
+
+# Service port (default: 3002)
+SERVICE_PORT=3002
+
+# Host
+HOST=127.0.0.1
+
+#  Inventory service url
+INVENTORY_SERVICE_URL=http://localhost:3002
+```
+
+---
+
 ## 🧪 Example Workflow
 
 1. Add a product via `/inventory`

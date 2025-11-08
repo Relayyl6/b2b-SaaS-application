@@ -10,6 +10,9 @@ pub struct ProductEvent {
     pub product_id: Uuid,
     pub supplier_id: Uuid,
     pub name: Option<String>,
+    pub description: Option<String>,
+    pub price: Option<f64>,
+    pub category: Option<String>,
     pub quantity: Option<i32>,
     pub low_stock_threshold: Option<i32>,
     pub unit: Option<String>,
@@ -28,6 +31,9 @@ pub async fn create_product_from_event(_pool: &PgPool, event: ProductEvent) -> R
             "supplier_id": event.supplier_id,
             "quantity": event.quantity.unwrap_or(0),
             "name": event.name.clone().unwrap_or("Unnamed product".to_string()),
+            "description": event.description.clone().unwrap_or("No description for this product".to_string()),
+            "price": event.price.unwrap_or(0.00),
+            "category": event.category.clone().unwrap_or("Unspecified Category".to_string()),
             "low_stock_threshold": event.low_stock_threshold.unwrap_or(5),
             "unit": event.unit.unwrap_or("unit".to_string())
         }))
@@ -52,7 +58,15 @@ pub async fn update_product_from_event(_pool: &PgPool, event: ProductEvent) -> R
         .post(&url)
         .json(&serde_json::json!({
             "product_id": event.product_id,
-            "quantity_change": event.quantity_change.unwrap_or(0)
+            "supplier_id": event.supplier_id,
+            "name": event.name,
+            "description": event.description,
+            "price": event.price,
+            "category": event.category,
+            "unit": event.unit,
+            "quantity": event.quantity,
+            "quantity_change": event.quantity_change,
+            // Add more fields if your Inventory Service expects them
         }))
         .send()
         .await?;
