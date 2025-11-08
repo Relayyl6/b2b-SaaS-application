@@ -213,8 +213,6 @@ REDIS_URL=redis://127.0.0.1:6379
 SERVICE_PORT=3003
 ```
 
-Here’s a concise, developer-friendly “Contributing” section you can add to your README:
-
 ---
 
 ### Contributing

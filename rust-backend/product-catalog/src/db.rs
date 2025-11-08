@@ -99,7 +99,7 @@ impl ProductRepo {
         .bind(req.unit.as_ref())
         .bind(req.quantity)
         .bind(req.available)
-        .bind(req.quantity_change) // new addition
+        .bind(req.quantity_change) // new addition or subtraction
         .bind(supplier_id)
         .bind(product_id)
         .fetch_one(&self.pool)

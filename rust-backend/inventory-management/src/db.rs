@@ -30,11 +30,32 @@ impl InventoryRepo {
         sqlx::query_as::<_, Inventory>(
             r#"
             UPDATE inventory
-            SET quantity = GREATEST(0, quantity + $1), updated_at = NOW()
-            WHERE supplier_id = $2 AND product_id = $3
-            RETURNING *
+            SET
+              name = COALESCE($1, name),
+              description = COALESCE($2, description),
+              category = COALESCE($3, category),
+              price = COALESCE($4, price),
+              unit = COALESCE($5, unit),
+              quantity = COALESCE(
+                  CASE 
+                      WHEN $8 IS NOT NULL THEN quantity + $8
+                      ELSE $6
+                  END,
+                  quantity
+              ),
+              available = COALESCE($7, available),
+              updated_at = NOW()
+            WHERE supplier_id = $9 AND product_id = $10
+            RETURNING id, product_id, supplier_id, name, description, category, price, unit, quantity, available, created_at, updated_at
             "#
         )
+        .bind(req.name.as_ref())
+        .bind(req.description.as_ref())
+        .bind(req.category.as_ref())
+        .bind(req.price)
+        .bind(req.unit.as_ref())
+        .bind(req.quantity)
+        .bind(req.available)
         .bind(req.quantity_change)
         .bind(supplier_id)
         .bind(req.product_id)
@@ -48,8 +69,8 @@ impl InventoryRepo {
     ) -> Result<Inventory, sqlx::Error> {
         sqlx::query_as::<_, Inventory>(
             r#"
-            INSERT INTO inventory (supplier_id, product_id, name, quantity, low_stock_threshold, unit)
-            VALUES ($1, $2, $3, $4, $5, $6)
+            INSERT INTO inventory (supplier_id, product_id, name, quantity, low_stock_threshold, unit, description, price, category)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
             RETURNING *
             "#
         )
@@ -59,6 +80,9 @@ impl InventoryRepo {
         .bind(req.quantity)
         .bind(req.low_stock_threshold)
         .bind(&req.unit)
+        .bind(&req.description)
+        .bind(&req.category)
+        .bind(req.price)
         .fetch_one(&self.pool)
         .await
     }
