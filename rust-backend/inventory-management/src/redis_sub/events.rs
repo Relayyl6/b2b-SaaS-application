@@ -17,9 +17,11 @@ pub struct ProductEvent {
     pub low_stock_threshold: Option<i32>,
     pub unit: Option<String>,
     pub quantity_change: Option<i32>,
+    pub available: Option<bool>,
 }
 
 pub async fn create_product_from_event(_pool: &PgPool, event: ProductEvent) -> Result<(), Box<dyn std::error::Error>> {
+
     let client = Client::new();
     let service_url = env::var("INVENTORY_SERVICE_URL").unwrap_or_else(|_| "http://localhost:3002".into());
     let url = format!("{}/inventory", service_url);
@@ -35,11 +37,11 @@ pub async fn create_product_from_event(_pool: &PgPool, event: ProductEvent) -> R
             "price": event.price.unwrap_or(0.00),
             "category": event.category.clone().unwrap_or("Unspecified Category".to_string()),
             "low_stock_threshold": event.low_stock_threshold.unwrap_or(5),
-            "unit": event.unit.unwrap_or("unit".to_string())
+            "unit": event.unit.unwrap_or("unit".to_string()),
         }))
         .send()
         .await?;
-
+    
     if resp.status().is_success() {
         println!("✅({}) Created product {:?} via API route", event.event_type, event.name);
     } else {
@@ -65,7 +67,9 @@ pub async fn update_product_from_event(_pool: &PgPool, event: ProductEvent) -> R
             "category": event.category,
             "unit": event.unit,
             "quantity": event.quantity,
+            "low_stock_threshold": event.low_stock_threshold,
             "quantity_change": event.quantity_change,
+            "available": event.available,
             // Add more fields if your Inventory Service expects them
         }))
         .send()

@@ -15,15 +15,17 @@ impl ProductRepo {
     pub async fn create_product(&self, req: &CreateProductRequest) -> Result<Product, sqlx::Error> {
         let available = req.available.unwrap_or(true);
         let quantity = req.quantity.unwrap_or(0);
+        let product_id = req.product_id.unwrap_or_else(Uuid::new_v4);
+        let low_stock_threshold = req.low_stock_threshold.unwrap_or(10);
 
         sqlx::query_as::<_, Product>(
             r#"
-            INSERT INTO products (product_id, supplier_id, name, description, category, price, unit, quantity, available)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-            RETURNING id, product_id, supplier_id, name, description, category, price, unit, quantity, available, created_at, updated_at
+            INSERT INTO products (product_id, supplier_id, name, description, category, price, unit, quantity, available, low_stock_threshold)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+            RETURNING id, product_id, supplier_id, name, description, category, price, unit, quantity, available, low_stock_threshold, created_at, updated_at
             "#
         )
-        .bind(&req.product_id)
+        .bind(product_id)
         .bind(req.supplier_id)
         .bind(&req.name)
         .bind(&req.description)
@@ -32,6 +34,7 @@ impl ProductRepo {
         .bind(&req.unit)
         .bind(quantity)
         .bind(available)
+        .bind(low_stock_threshold)
         .fetch_one(&self.pool)
         .await
     }
@@ -87,9 +90,10 @@ impl ProductRepo {
                   quantity
               ),
               available = COALESCE($7, available),
+              low_stock_threshold = COALESCE($9, low_stock_threshold),
               updated_at = NOW()
-            WHERE supplier_id = $9 AND product_id = $10
-            RETURNING id, product_id, supplier_id, name, description, category, price, unit, quantity, available, created_at, updated_at
+            WHERE supplier_id = $10 AND product_id = $11
+            RETURNING id, product_id, supplier_id, name, description, category, price, unit, quantity, available, low_stock_threshold, created_at, updated_at
             "#
         )
         .bind(req.name.as_ref())
@@ -100,6 +104,7 @@ impl ProductRepo {
         .bind(req.quantity)
         .bind(req.available)
         .bind(req.quantity_change) // new addition or subtraction
+        .bind(req.low_stock_threshold)
         .bind(supplier_id)
         .bind(product_id)
         .fetch_one(&self.pool)

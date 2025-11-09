@@ -31,22 +31,23 @@ impl InventoryRepo {
             r#"
             UPDATE inventory
             SET
-              name = COALESCE($1, name),
-              description = COALESCE($2, description),
-              category = COALESCE($3, category),
-              price = COALESCE($4, price),
-              unit = COALESCE($5, unit),
-              quantity = COALESCE(
-                  CASE 
-                      WHEN $8 IS NOT NULL THEN quantity + $8
-                      ELSE $6
-                  END,
-                  quantity
-              ),
-              available = COALESCE($7, available),
-              updated_at = NOW()
-            WHERE supplier_id = $9 AND product_id = $10
-            RETURNING id, product_id, supplier_id, name, description, category, price, unit, quantity, available, created_at, updated_at
+                name = COALESCE($1, name),
+                description = COALESCE($2, description),
+                category = COALESCE($3, category),
+                price = COALESCE($4, price),
+                unit = COALESCE($5, unit),
+                quantity = COALESCE(
+                    CASE
+                        WHEN $8 IS NOT NULL THEN quantity + $8
+                        ELSE $6
+                    END,
+                    quantity
+                ),
+                available = COALESCE($7, available),
+                low_stock_threshold = COALESCE($9, low_stock_threshold),
+                updated_at = NOW()
+            WHERE supplier_id = $10 AND product_id = $11
+            RETURNING id, product_id, supplier_id, name, description, category, price, unit, quantity, available, low_stock_threshold, created_at, updated_at
             "#
         )
         .bind(req.name.as_ref())
@@ -57,6 +58,7 @@ impl InventoryRepo {
         .bind(req.quantity)
         .bind(req.available)
         .bind(req.quantity_change)
+        .bind(req.low_stock_threshold)
         .bind(supplier_id)
         .bind(req.product_id)
         .fetch_one(&self.pool)
@@ -81,8 +83,8 @@ impl InventoryRepo {
         .bind(req.low_stock_threshold)
         .bind(&req.unit)
         .bind(&req.description)
-        .bind(&req.category)
         .bind(req.price)
+        .bind(&req.category)
         .fetch_one(&self.pool)
         .await
     }

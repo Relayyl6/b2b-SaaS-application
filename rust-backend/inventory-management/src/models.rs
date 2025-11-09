@@ -30,6 +30,7 @@ pub struct UpdateStockRequest {
     pub quantity: Option<i32>,
     pub quantity_change: Option<i32>,
     pub available: Option<bool>,
+    pub low_stock_threshold: Option<i32>,
 }
 
 

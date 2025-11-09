@@ -90,9 +90,9 @@ pub async fn update_stock(
                 name: Some(inventory.name.clone()),
                 description: Some(inventory.description.clone()),
                 category: Some(inventory.category.clone()),
-                price: Some(inventory.price.clone()),
+                price: Some(inventory.price),
                 unit: Some(inventory.unit.clone()),
-                available: Some(inventory.available.clone()),
+                available: Some(inventory.available),
             };
 
             // Publish to Redis channels

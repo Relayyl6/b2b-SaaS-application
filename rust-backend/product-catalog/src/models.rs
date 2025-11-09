@@ -15,6 +15,7 @@ pub struct Product {
     pub unit: String,
     pub quantity: i32,
     pub available: bool,
+    pub low_stock_threshold: i32,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -30,6 +31,7 @@ pub struct CreateProductRequest {
     pub unit: String,
     pub quantity: Option<i32>,
     pub available: Option<bool>,
+    pub low_stock_threshold: Option<i32>, // <- new
 }
 
 #[allow(dead_code)]
@@ -44,6 +46,7 @@ pub struct UpdateProductRequest {
     pub quantity: Option<i32>,
     pub available: Option<bool>,
     pub quantity_change: Option<i32>,
+    pub low_stock_threshold: Option<i32>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -64,4 +67,5 @@ pub struct ProductEvent {
     pub low_stock_threshold: Option<i32>,
     pub unit: Option<String>,
     pub quantity_change: Option<i32>,
+    pub available: Option<bool>
 }
