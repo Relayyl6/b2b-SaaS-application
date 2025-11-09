@@ -29,6 +29,7 @@ pub async fn create_product(
                 low_stock_threshold: None,
                 unit: Some(product.unit.clone()),
                 quantity_change: None,
+                available: None,
             };
 
             if let Err(e) = redis_pub.publish("product.created", &event).await {
@@ -99,9 +100,10 @@ pub async fn update_product(
                 price: Some(p.price),
                 category: Some(p.category.clone()),
                 quantity: Some(p.quantity),
-                low_stock_threshold: None,
+                low_stock_threshold: Some(p.low_stock_threshold),
                 unit: Some(p.unit.clone()),
                 quantity_change: update_data.quantity_change,
+                available: Some(p.available),
             };
 
             if let Err(e) = redis_pub.publish("product.updated", &event).await {
@@ -196,13 +198,14 @@ pub async fn bulk_create(
                     product_id: p.product_id,
                     supplier_id: p.supplier_id,
                     name: Some(p.name.clone()),
-                    description: Some(p.description.clone()),
+                    description: p.description.clone(),
                     category: Some(p.category.clone()),
                     price: Some(p.price),
                     quantity: Some(p.quantity),
                     low_stock_threshold: None,
                     unit: Some(p.unit.clone()),
                     quantity_change: None,
+                    available: None,
                 };
 
                 if let Err(e) = redis_pub.publish("product.created", &event).await {

@@ -12,9 +12,10 @@ CREATE TABLE products (
     unit TEXT NOT NULL,
     quantity INTEGER NOT NULL DEFAULT 0,
     available BOOLEAN NOT NULL DEFAULT TRUE,
+    low_stock_threshold INTEGER NOT NULL DEFAULT 10,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    UNIQUE(supplier_id, name)
+    UNIQUE(product_id, id)
 );
 
 CREATE INDEX idx_products_supplier ON products(supplier_id);

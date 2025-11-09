@@ -11,12 +11,16 @@ CREATE TABLE IF NOT EXISTS inventory (
     quantity INTEGER NOT NULL DEFAULT 0,
     low_stock_threshold INTEGER NOT NULL DEFAULT 10,
     unit TEXT NOT NULL,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
     updated_at TIMESTAMPTZ DEFAULT NOW(),
-    UNIQUE(supplier_id, product_id)
+    UNIQUE(product_id, id)
 );
 
 CREATE INDEX IF NOT EXISTS idx_inventory_supplier ON inventory(supplier_id);
 
 -- Convert price column to DOUBLE PRECISION for Rust f64 compatibility
--- ALTER TABLE inventory
--- ALTER COLUMN price TYPE DOUBLE PRECISION USING price::double precision;
+ALTER TABLE inventory
+ALTER COLUMN price TYPE DOUBLE PRECISION USING price::double precision;
+
+ALTER TABLE inventory
+ADD COLUMN available BOOLEAN NOT NULL DEFAULT TRUE;
