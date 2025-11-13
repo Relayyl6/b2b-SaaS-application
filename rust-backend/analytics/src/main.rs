@@ -1,16 +1,34 @@
 use redis::{AsyncCommands, RedisResult, from_redis_value};
 use redis::streams::{StreamReadOptions, StreamReadReply};
 use serde::{Deserialize, Serialize};
-use serde_json::json;
+use serde_json::{json, Value};
 use reqwest::Client;
+use std::collections::HashMap;
 use std::env;
 use tokio::task;
 
 #[derive(Debug, Serialize, Deserialize)]
 struct AnalyticsEvent {
     event_type: String,
-    payload: serde_json::Value,
+    source_stream: String,
+    payload: Value,
     timestamp: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct ProductEvent {
+    event_type: String, // "Product.created", "Product.updated", etc.
+    product_id: Option<String>,
+    supplier_id: Option<String>,
+    name: Option<String>,
+    description: Option<String>,
+    price: Option<f64>,
+    category: Option<String>,
+    quantity: Option<i32>,
+    low_stock_threshold: Option<i32>,
+    unit: Option<String>,
+    quantity_change: Option<i32>,
+    available: Option<bool>,
 }
 
 async fn index_event_to_opensearch(
@@ -32,7 +50,7 @@ async fn index_event_to_opensearch(
     Ok(())
 }
 
-async fn consume_stream(stream: &str) {
+async fn consume_stream(stream: &str, allowed_events: Vec<&str>) {
     let redis_url = env::var("REDIS_URL").expect("REDIS_URL not set");
     let client = redis::Client::open(redis_url).expect("Failed to create Redis client");
     let mut con = client
@@ -41,11 +59,9 @@ async fn consume_stream(stream: &str) {
         .expect("Failed to connect to Redis");
 
     let mut last_id = "0".to_string();
-
-    println!("🎧 Listening to stream: {}", stream);
+    println!("📡 Listening to stream: {}", stream);
 
     loop {
-        // Use the high-level XREAD API
         let opts = StreamReadOptions::default().block(0);
         let reply: RedisResult<StreamReadReply> = redis::cmd("XREAD")
             .arg("BLOCK")
@@ -59,7 +75,7 @@ async fn consume_stream(stream: &str) {
         let reply = match reply {
             Ok(r) => r,
             Err(e) => {
-                eprintln!("❌ Redis read error: {}", e);
+                eprintln!("❌ Redis read error on {}: {}", stream, e);
                 continue;
             }
         };
@@ -67,26 +83,35 @@ async fn consume_stream(stream: &str) {
         for key in reply.keys {
             for msg in key.ids {
                 last_id = msg.id.clone();
+                let mut payload_map = serde_json::Map::new();
 
-                // Convert message fields into a JSON map safely
-                let mut payload = serde_json::Map::new();
                 for (field, value) in msg.map {
-                    // Convert redis::Value into String using FromRedisValue
-                    let val_str: String = match from_redis_value(&value) {
-                        Ok(v) => v,
-                        Err(_) => format!("{:?}", value), // fallback if not convertible
-                    };
-                    payload.insert(field.clone(), json!(val_str));
+                    let val_str: String = from_redis_value(&value).unwrap_or_else(|_| format!("{:?}", value));
+                    payload_map.insert(field.clone(), json!(val_str));
+                }
+
+                // Try to extract event type (if available in payload)
+                let event_type = payload_map
+                    .get("event_type")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("unknown")
+                    .to_string();
+
+                // Only process events that belong to this stream
+                if !allowed_events.contains(&event_type.as_str()) {
+                    println!("🚫 Ignored unrelated event: {}", event_type);
+                    continue;
                 }
 
                 let analytics_event = AnalyticsEvent {
-                    event_type: stream.to_string(),
-                    payload: serde_json::Value::Object(payload),
+                    event_type: event_type.clone(),
+                    source_stream: stream.to_string(),
+                    payload: Value::Object(payload_map.clone()),
                     timestamp: chrono::Utc::now().to_rfc3339(),
                 };
 
                 if let Err(e) = index_event_to_opensearch(&analytics_event).await {
-                    eprintln!("❌ Failed to send event to OpenSearch: {}", e);
+                    eprintln!("❌ Failed to index event from {}: {}", stream, e);
                 }
             }
         }
@@ -97,23 +122,70 @@ async fn consume_stream(stream: &str) {
 async fn main() {
     dotenv::dotenv().ok();
 
-    let streams = vec![
-        "orders_stream",
-        "inventory_stream",
-        "suppliers_stream",
-        "restaurants_stream",
-        "payments_stream",
-        "product_stream"
-    ];
+    // Define event groups (service → events)
+    let event_groups: HashMap<&str, Vec<&str>> = HashMap::from([
+        (
+            "product_stream",
+            vec![
+                "Product.created",
+                "Product.updated",
+                "Product.deleted",
+            ],
+        ),
+        (
+            "user_stream",
+            vec![
+                "User.created",
+                "User.deleted",
+                "User.sign_up",
+                "User.sign_in",
+                "User.sign_out",
+                "User.updated",
+            ],
+        ),
+        (
+            "orders_stream",
+            vec![
+                "Order.created",
+                "Order.cancelled",
+                "Order.completed",
+                "Product.sold",
+                "Product.bought"
+            ],
+        ),
+        (
+            "payments_stream",
+            vec![
+                "Payments.processed",
+                "Payments.failed"
+            ],
+        ),
+        (
+            "inventory_stream",
+            vec![
+                "Inventory.low_stock", 
+                "Inventory.updated"   
+            ],
+        ),
+        (
+            "suppliers_stream",
+            vec![
+                "Supplier.created",
+                "Supplier.deleted"
+            ],
+        ),
+    ]);
 
-    for stream in streams {
+    // Spawn a consumer task for each stream
+    for (stream, events) in event_groups {
         let s = stream.to_string();
+        let e = events.clone();
         task::spawn(async move {
-            consume_stream(&s).await;
+            consume_stream(&s, e).await;
         });
     }
 
-    // Prevent the app from exiting
+    // Keep running forever
     loop {
         tokio::time::sleep(std::time::Duration::from_secs(60)).await;
     }
