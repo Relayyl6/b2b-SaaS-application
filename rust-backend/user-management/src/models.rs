@@ -15,8 +15,10 @@ pub struct Users {
     pub updated_at: DateTime<Utc>,
 }
 
-#[derive(Debug, Clone)]
-#[serde(rename_all=lowercase)]
+use sqlx::Type;
+#[sqlx(type_name = "user_role")]
+#[derive(Serialize, Deserialize, Clone, Type, Debug)]
+#[serde(rename_all = "lowercase")]
 pub enum UserRole {
     Admin,
     Supplier,
@@ -38,6 +40,11 @@ pub struct SignInRequest {
 }
 
 #[derive(Serialize, Deserialize, Debug)]
+pub struct SignOutRequest {
+    pub token: String
+}
+
+#[derive(Serialize, Deserialize, Debug)]
 pub struct AuthResponse {
     pub token: String,
     pub user: User,
@@ -46,6 +53,7 @@ pub struct AuthResponse {
 #[derive(Serialize, Deserialize, Debug)]
 pub struct UpdateUserRequest {
     pub full_name: Option<String>,
+    pub email: Option<String>,
     pub password: Option<String>,
     pub role: Option<UserRole>,
     pub is_active: Option<bool>
@@ -55,3 +63,6 @@ pub struct UpdateUserRequest {
 pub struct DeleteUserRequest {
     pub user_id: String,
 }
+
+
+

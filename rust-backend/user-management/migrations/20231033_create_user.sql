@@ -13,3 +13,11 @@ CREATE TABLE IF NOT EXISTS users (
 );
 
 CREATE INDEX IF NOT EXISTS idx_user ON users(id);
+
+CREATE TABLE IF NOT EXISTS revoked_tokens (
+    id SERIAL PRIMARY KEY,
+    token TEXT NOT NULL,
+    revoked_at TIMESTAMP DEFAULT NOW()
+);
+
+CREATE TYPE user_role AS ENUM ('user', 'admin', 'supplier');
