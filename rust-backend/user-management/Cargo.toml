@@ -14,3 +14,4 @@ dotenvy = "0.15"
 env_logger = "0.10"
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 redis = { version = "0.23", features = ["aio", "tokio-comp"] }
+argon2 = "0.5.3"
