@@ -166,9 +166,9 @@ impl ProductRepo {
         for it in items {
             let p = sqlx::query_as::<_, Product>(
                 r#"
-                INSERT INTO products (product_id, supplier_id, name, description, category, price, unit, quantity, available)
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-                RETURNING id, product_id, supplier_id, name, description, category, price, unit, quantity, available, created_at, updated_at
+                INSERT INTO products (product_id, supplier_id, name, description, category, price, unit, quantity, available, low_stock_threshold)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+                RETURNING id, product_id, supplier_id, name, description, category, price, unit, quantity, available, low_stock_threshold, created_at, updated_at
                 "#
             )
             .bind(&it.product_id)
@@ -180,6 +180,7 @@ impl ProductRepo {
             .bind(&it.unit)
             .bind(it.quantity.unwrap_or(0))
             .bind(it.available.unwrap_or(true))
+            .bind(it.low_stock_threshold.unwrap_or(10))
             .fetch_one(&mut *tx)
             .await?;
 
