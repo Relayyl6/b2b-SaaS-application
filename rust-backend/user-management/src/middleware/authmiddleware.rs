@@ -3,7 +3,7 @@ use actix_web::{
     Error, HttpMessage,
 };
 use actix_web::body::EitherBody;
-use futures::future::LocalBoxFuture
+use futures::future::LocalBoxFuture;
 use std::future::{ready, Ready};
 use jsonwebtoken::{decode, DecodingKey, Validation, Algorithm};
 use sqlx::PgPool;
@@ -11,17 +11,20 @@ use std::{
     rc::Rc,
     task::{Context, Poll}
 };
+use std::sync::Arc;
 use crate::models::{Users, Claims};
 
+
+#[derive(Clone)]
 pub struct AuthMiddleware {
-    pool: Rc<PgPool>,
+    pool: Arc<PgPool>,
     jwt_secret: String,
 }
 
 impl AuthMiddleware {
     pub fn new(pool: PgPool, jwt_secret: String) -> Self {
         Self {
-            pool: Rc::new(pool),
+            pool: Arc::new(pool),
             jwt_secret,
         }
     }
@@ -29,7 +32,7 @@ impl AuthMiddleware {
 
 impl<S, B> Transform<S, ServiceRequest> for AuthMiddleware
 where
-    S: Service<ServiceRequest, Response = ServiceResponse<B>, Error = Error> + Clone + 'static,
+    S: Service<ServiceRequest, Response = ServiceResponse<B>, Error = Error> + 'static,
     B: 'static,
 {
     type Response = ServiceResponse<EitherBody<B>>;
@@ -47,9 +50,10 @@ where
     }
 }
 
+
 pub struct AuthMiddlewareMiddleware<S> {
     service: S,
-    pool: Rc<PgPool>,
+    pool: Arc<PgPool>,
     jwt_secret: String,
 }
 
@@ -66,32 +70,30 @@ where
         self.service.poll_ready(ctx)
     }
 
-    fn call(&self, req: ServiceRequest) -> Self::Future {
+    fn call(&self, mut req: ServiceRequest) -> Self::Future {
         let pool = self.pool.clone();
         let jwt_secret = self.jwt_secret.clone();
         let svc = self.service.clone();
 
         Box::pin(async move {
-            // --------- Extract token ----------
-            let auth_header = req.headers().get("Authorization")
+            // Extract Authorization: Bearer token
+            let token = req
+                .headers()
+                .get("Authorization")
                 .and_then(|h| h.to_str().ok())
                 .and_then(|h| h.strip_prefix("Bearer "))
-                .map(|s| s.to_string());
+                .map(|s| s.to_string())
+                .ok_or_else(|| actix_web::error::ErrorUnauthorized("No token provided"))?;
 
-            let token = match auth_header {
-                Some(t) => t,
-                None => return Err(actix_web::error::ErrorUnauthorized("No token provided")),
-            };
-
-            // --------- Decode & verify token ----------
+            // Decode JWT
             let decoded = decode::<Claims>(
                 &token,
-                &DecodingKey::from_secret(jwt_secret.as_ref()),
+                &DecodingKey::from_secret(jwt_secret.as_bytes()),
                 &Validation::new(Algorithm::HS256),
             )
-            .map_err(|_| actix_web::error::ErrorUnauthorized("Invalid/expired token"))?;
+            .map_err(|_| actix_web::error::ErrorUnauthorized("Invalid or expired token"))?;
 
-            // --------- Check revocation ----------
+            // Check revocation
             let revoked = sqlx::query_scalar::<_, i64>(
                 "SELECT 1 FROM revoked_tokens WHERE token = $1"
             )
@@ -104,7 +106,7 @@ where
                 return Err(actix_web::error::ErrorUnauthorized("Token revoked"));
             }
 
-            // --------- Fetch user ----------
+            // Fetch user
             let user = sqlx::query_as::<_, Users>(
                 "SELECT * FROM users WHERE id = $1"
             )
@@ -113,7 +115,7 @@ where
             .await
             .map_err(|_| actix_web::error::ErrorUnauthorized("User not found"))?;
 
-            // Attach user to extensions
+            // Attach user
             req.extensions_mut().insert(user);
 
             let res = svc.call(req).await?;

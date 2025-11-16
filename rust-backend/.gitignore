@@ -4,3 +4,6 @@ Cargo.lock
 .env
 /product-catalog/.env
 /inventory-management/.env
+/user-management/.env
+/order-service/.env
+/analytics/.env

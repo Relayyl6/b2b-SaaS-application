@@ -20,7 +20,7 @@ use redis::Client as RedisClient;
 use crate::protected::handlers as protected_handlers;
 use crate::unprotected::handlers as unprotected_handlers;
 
-use crate::middleware::authmiddleware::AuthMiddleware;
+use middleware::authmiddleware::AuthMiddleware;
 
 // use protected::handlers;
 
@@ -41,7 +41,7 @@ async fn main() -> std::io::Result<()> {
 
     let repo = web::Data::new(UserRepo::new(pool));
 
-    let middleware = Authmiddleware::new(pool.clone(), jwt_secret.clone());
+    let middleware = AuthMiddleware::new(pool.clone(), jwt_secret.clone());
 
     let redis_pub = match &redis_url {
         Some(url) => match RedisPublisher::new(url).await {
