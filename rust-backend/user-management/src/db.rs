@@ -99,23 +99,34 @@ impl UserRepo {
     ) -> Result<Users, sqlx::Error> {
         let new_email = &req.email.as_deref();
         let new_full_name = &req.full_name.as_deref();
+        let new_password = &req.password.as_deref();
+        let new_role = &req.role.as_deref();
+        let new_is_active = &req.is_active.as_deref();
+        
         sqlx::query_as::<_, Users>(
             r#"
             UPDATE users
             SET 
                 email = COALESCE($1, email),
                 full_name = COALESCE($2, full_name),
+                password = COALESCE($3, password),
+                role = COALESCE($4, role),
+                is_active = COALESCE($5, is_active),
                 updated_at = NOW()
-            WHERE id = $3
+            WHERE id = $6
             RETURNING id, email, password, full_name, role, is_active, created_at, updated_at
             "#
         )
         .bind(new_email)
         .bind(new_full_name)
+        .bind(new_password)
+        .bind(new_role)
+        .bind(new_is_active)
         .bind(user_id)
         .fetch_one(&self.pool)
         .await
     }
+    
     pub async fn delete_user(
         &self,
         user_id: Uuid,
