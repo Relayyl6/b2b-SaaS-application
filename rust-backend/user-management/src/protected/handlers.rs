@@ -1,11 +1,14 @@
 // use crate::db::{sign_in, sign_out, sign_up, update_user, delete_user};
 use actix_web::{web, HttpResponse, HttpRequest};
+use actix_web::HttpMessage;
 // use sqlx::PgPool;
 use crate::models::{Users, UpdateUserRequest};
 // use crate::auth::{hash_password, verify_password, create_jwt, verify_jwt, user_exists};
 // use std::env;
 use uuid::Uuid;
 use crate::db::UserRepo;
+// use actix_web::
+use crate::models::UserRole;
 
 pub async fn update_user_handler(
     req: HttpRequest,
@@ -21,7 +24,7 @@ pub async fn update_user_handler(
     let user_id = path.into_inner();
 
     // Optional: check if user has permission (e.g., admin or self)
-    if auth_user.id != user_id && auth_user.role != "Admin" {
+    if auth_user.id != user_id && auth_user.role == UserRole::Admin  {
         return HttpResponse::Forbidden().body("Not authorized");
     }
 
@@ -44,7 +47,7 @@ pub async fn delete_user_handler(
     let target_user_id = path.into_inner();
 
     // Only admin or the user themselves can delete
-    if auth_user.id != target_user_id && auth_user.role != "Admin" {
+    if auth_user.id != target_user_id && auth_user.role == UserRole::Admin {
         return HttpResponse::Forbidden().body("Not authorized");
     }
 

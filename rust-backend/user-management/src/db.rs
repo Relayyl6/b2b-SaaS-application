@@ -1,6 +1,6 @@
 // use actix_web::{web, HttpResponse, Responder, HttpRequest};
 use sqlx::PgPool;
-use crate::models::{Users, SignUpRequest, SignInRequest, SignOutRequest, UpdateUserRequest, UserRole};
+use crate::models::{Users, SignUpRequest, SignInRequest, UpdateUserRequest, UserRole};
 use crate::auth::{hash_password, verify_password, create_jwt, user_exists};
 use std::env;
 use uuid::Uuid;
@@ -42,7 +42,7 @@ impl UserRepo {
         .await?;
 
          let token = create_jwt(user.id, &user.role, &secret)
-            .map_err(|_| sqlx::Error::Protocol("Failed to create JWT".into()));
+            .map_err(|_| sqlx::Error::Protocol("Failed to create JWT".into()))?;
 
         Ok((user, token))
     }
@@ -100,8 +100,8 @@ impl UserRepo {
         let new_email = &req.email.as_deref();
         let new_full_name = &req.full_name.as_deref();
         let new_password = &req.password.as_deref();
-        let new_role = &req.role.as_deref();
-        let new_is_active = &req.is_active.as_deref();
+        let new_role = &req.role.as_ref();
+        let new_is_active = &req.is_active.as_ref();
         
         sqlx::query_as::<_, Users>(
             r#"

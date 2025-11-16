@@ -1,5 +1,5 @@
-use argon2::{self, Config};
-use jsonwebtoken::{encode, decode, Header, EncodingKey, DecodingKey, Validation};
+
+use jsonwebtoken::{encode, Header, EncodingKey};
 // use serde::{Deserialize, Serialize};
 use chrono;
 use crate::models::{UserRole};
@@ -8,7 +8,9 @@ use crate::models::Claims;
 use uuid::Uuid;
 
 use argon2::{Argon2, PasswordHash, PasswordHasher, PasswordVerifier};
-use rand_core::OsRng;
+use argon2::password_hash::rand_core::OsRng;
+
+
 
 pub fn hash_password(password: &str) -> String {
     let salt = argon2::password_hash::SaltString::generate(&mut OsRng);
@@ -47,9 +49,9 @@ pub fn create_jwt(user_id: Uuid, role: &UserRole, secret: &str) -> Result<String
     encode(&Header::default(), &claims, &EncodingKey::from_secret(secret.as_ref()))
 }
 
-pub fn verify_jwt(token: &str, secret: &str) -> Result<Claims, String> {
-    decode::<Claims>(token, &DecodingKey::from_secret(secret.as_ref()), &Validation::default())
-}
+// pub fn verify_jwt(token: &str, secret: &str) -> Result<Claims, String> {
+//     decode::<Claims>(token, &DecodingKey::from_secret(secret.as_ref()), &Validation::default())
+// }
 
 pub async fn user_exists(pool: &PgPool, email: &str) -> Result<bool, sqlx::Error> {
     let row = sqlx::query_scalar::<_, i64>(
