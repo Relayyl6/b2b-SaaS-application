@@ -15,7 +15,7 @@ CREATE TABLE IF NOT EXISTS users (
 CREATE INDEX IF NOT EXISTS idx_user ON users(id);
 
 CREATE TABLE IF NOT EXISTS revoked_tokens (
-    id SERIAL PRIMARY KEY,
+    id SERIAL PRIMARY KEY DEFAULT gen_random_uuid(),
     token TEXT NOT NULL,
     revoked_at TIMESTAMP DEFAULT NOW()
 );

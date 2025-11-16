@@ -1,21 +1,30 @@
 mod models;
 mod db;
 mod redis_pub;
-mod handlers;
 mod auth;
-mod authmiddleware;
-mod redis_pub;
-mod redis_sub;
+mod middleware;
+// mod redis_sub;
 
-use doteny::dotenv;
+mod protected;
+mod unprotected;
+
+
+use dotenvy::dotenv;
 use std::env;
 use actix_web::{web, App, HttpServer};
 use sqlx::PgPool;
-use crate::db::ProductRepo;
+use crate::db::UserRepo;
 use crate::redis_pub::RedisPublisher;
 use redis::Client as RedisClient;
 
-use crate::db::UserRepo;
+use crate::protected::handlers as protected_handlers;
+use crate::unprotected::handlers as unprotected_handlers;
+
+use crate::middleware::authmiddleware::AuthMiddleware;
+
+// use protected::handlers;
+
+// use crate::unhandlers::{sign_up_user, sign_in_user, sign_out_user}
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
@@ -25,11 +34,14 @@ async fn main() -> std::io::Result<()> {
     let database_url = env::var("DATABASE_URL").expect("Database url must be set in the environment variable");
     let redis_url = env::var("REDIS_URL").ok();
     let port = env::var("PORT").unwrap_or_else(|_| "3004".to_string());
+    let jwt_secret = env::var("SECRET").unwrap_or_else(|_| "something".to_string());
 
     let pool = PgPool::connect(&database_url).await.expect("Failed to connect to postgres database");
-    sqlx::migrate("./migrations").run(&pool).await.expect("Migrations Failed");
+    sqlx::migrate!("./migrations").run(&pool).await.expect("Migrations Failed");
 
     let repo = web::Data::new(UserRepo::new(pool));
+
+    let middleware = Authmiddleware::new(pool.clone(), jwt_secret.clone());
 
     let redis_pub = match &redis_url {
         Some(url) => match RedisPublisher::new(url).await {
@@ -56,19 +68,15 @@ async fn main() -> std::io::Result<()> {
             .app_data(redis_pub.clone())
             .app_data(redis_client.clone())
             .service(
-                web::scope("/protected")       // all /products/* routes
-                    .wrap(authmiddleware.clone())  // middleware only applies here
-                    .route("/update/{id}", web::put().to(handlers::update_user_handler))
-                    .route("/delete/{id}", web::delete().to(handlers::delete_user_handler))
+                web::scope("/protected")       // all /protected/* routes
+                    .wrap(middleware.clone())  // middleware only applies here
+                    .route("/update/{id}", web::put().to(protected_handlers::update_user_handler))
+                    .route("/delete/{id}", web::delete().to(protected_handlers::delete_user_handler))
             )
             // other unprotected routes outside the scope
-            .route("/products", web::post().to(handlers::create_product))
-            .route("/products/bulk", web::post().to(handlers::bulk_create))
-            .route("/products/search", web::get().to(handlers::search_products))
-            .route("/products/{supplier_id}/{product_id}", web::get().to(handlers::get_single_product))
-            .route("/products/{supplier_id}/{product_id}", web::put().to(handlers::update_product))
-            .route("/products/{supplier_id}/{product_id}", web::delete().to(handlers::delete_product))
-            .route("/products/{supplier_id}", web::get().to(handlers::get_products_for_supplier))
+            .route("/signup", web::post().to(unprotected_handlers::sign_up_user))
+            .route("/signin", web::post().to(unprotected_handlers::sign_in_user))
+            .route("/signout", web::post().to(unprotected_handlers::sign_out_user))
     })
     .bind(format!("0.0.0.0:{}", port))?
     .run()
