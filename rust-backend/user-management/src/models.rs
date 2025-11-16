@@ -2,6 +2,7 @@ use serde::{Serialize, Deserialize};
 use sqlx::FromRow;
 use chrono::{DateTime, Utc};
 use uuid::Uuid;
+use sqlx::Type;
 
 #[derive(Debug, Serialize, Deserialize, FromRow)]
 pub struct Users {
@@ -15,10 +16,9 @@ pub struct Users {
     pub updated_at: DateTime<Utc>,
 }
 
-use sqlx::Type;
-#[sqlx(type_name = "user_role")]
-#[derive(Serialize, Deserialize, Clone, Type, Debug)]
-#[serde(rename_all = "lowercase")]
+
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::Type)]
+#[sqlx(type_name = "user_role", rename_all = "lowercase")]
 pub enum UserRole {
     Admin,
     Supplier,
@@ -26,7 +26,7 @@ pub enum UserRole {
 }
 
 #[derive(Serialize, Deserialize, Debug)]
-pub struct SignUpRequest {
+pub struct SignUpRequest {  
     pub email: String,
     pub password: String,
     pub full_name: String,
@@ -46,8 +46,15 @@ pub struct SignOutRequest {
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct AuthResponse {
+    pub user: Users,
     pub token: String,
-    pub user: User,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct Claims {
+    pub sub: Uuid,
+    pub role: UserRole,
+    pub exp: usize
 }
 
 #[derive(Serialize, Deserialize, Debug)]

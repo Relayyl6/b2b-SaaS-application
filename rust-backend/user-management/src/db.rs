@@ -1,7 +1,7 @@
-use actix_web::{web, HttpResponse, Responder, HttpRequest};
+// use actix_web::{web, HttpResponse, Responder, HttpRequest};
 use sqlx::PgPool;
-use crate::models::{Users, SignUpRequest, SignInRequest, SignOutRequest, AuthResponse, UpdateUserRequest, DeleteUserRequest, UserRole};
-use crate::auth::{hash_password, verify_password, create_jwt, verify_jwt, user_exists};
+use crate::models::{Users, SignUpRequest, SignInRequest, SignOutRequest, UpdateUserRequest, UserRole};
+use crate::auth::{hash_password, verify_password, create_jwt, user_exists};
 use std::env;
 use uuid::Uuid;
 
@@ -14,10 +14,12 @@ impl UserRepo {
         Self { pool }
     }
 
-    pub async fn sign_up(&self, req: &SignUpRequest) -> Result<Users, sqlx::Error> {
-        let role: UserRole = req.role.clone().unwrap_or(UserRole::User);
+    pub async fn sign_up(&self, req: &SignUpRequest) -> Result<(Users, String), sqlx::Error> {
+        let role = req.role.clone().unwrap_or(UserRole::User);
         let email = &req.email;
         let full_name = &req.full_name;
+
+        let secret = env::var("SECRET").unwrap_or_else(|_| "obiisaboy".to_string());
 
         if user_exists(&self.pool, email).await? {
             return Err(sqlx::Error::RowNotFound);
@@ -39,10 +41,13 @@ impl UserRepo {
         .fetch_one(&self.pool)
         .await?;
 
-        Ok(user)
+         let token = create_jwt(user.id, &user.role, &secret)
+            .map_err(|_| sqlx::Error::Protocol("Failed to create JWT".into()));
+
+        Ok((user, token))
     }
 
-    pub async fn sign_in(&self, req: &SignInRequest) -> Result<(AuthResponse, String), sqlx::Error> {
+    pub async fn sign_in(&self, req: &SignInRequest) -> Result<(Users, String), sqlx::Error> {
         let email: &String = &req.email;
         let password: &String = &req.password;
         let secret = env::var("SECRET").unwrap_or_else(|_| "obiisaboy".to_string());
@@ -68,20 +73,20 @@ impl UserRepo {
         } 
         
         let token = create_jwt(user.id, &user.role, &secret)
-            .map_err(|_| sqlx::Error::Protocol("Failed to create JWT".into()));
+            .map_err(|_| sqlx::Error::Protocol("Failed to create JWT".into()))?;
 
         Ok((user, token))
     }
 
     pub async fn sign_out(
         &self,
-        req: &SignOutRequest
+        token: &str
     ) -> Result<(), sqlx::Error> {
         sqlx::query(
             "INSERT INTO revoked_tokens (token) VALUES ($1)"
         )
-        .bind(&req.token)
-        .fetch_one(&self.pool)
+        .bind(token)
+        .execute(&self.pool)
         .await?;
 
         Ok(())
