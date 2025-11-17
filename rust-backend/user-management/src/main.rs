@@ -39,7 +39,7 @@ async fn main() -> std::io::Result<()> {
     let pool = PgPool::connect(&database_url).await.expect("Failed to connect to postgres database");
     sqlx::migrate!("./migrations").run(&pool).await.expect("Migrations Failed");
 
-    let repo = web::Data::new(UserRepo::new(pool));
+    let repo = web::Data::new(UserRepo::new(pool.clone()));
 
     let middleware = AuthMiddleware::new(pool.clone(), jwt_secret.clone());
 

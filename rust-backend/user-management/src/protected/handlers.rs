@@ -16,7 +16,8 @@ pub async fn update_user_handler(
     path: web::Path<Uuid>,
     payload: web::Json<UpdateUserRequest>,
 ) -> HttpResponse {
-    let auth_user = match req.extensions().get::<Users>() {
+    let extensions = req.extensions();
+    let auth_user = match extensions.get::<Users>() {
         Some(u) => u,
         None => return HttpResponse::Unauthorized().finish(),
     };
@@ -39,7 +40,8 @@ pub async fn delete_user_handler(
     repo: web::Data<UserRepo>,
     path: web::Path<Uuid>,
 ) -> HttpResponse {
-    let auth_user = match req.extensions().get::<Users>() {
+    let extensions = req.extensions();
+    let auth_user = match extensions.get::<Users>() {
         Some(u) => u,
         None => return HttpResponse::Unauthorized().finish(),
     };
