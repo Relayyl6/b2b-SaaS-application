@@ -4,8 +4,9 @@ use actix_web::{web, HttpResponse, HttpRequest};
 use crate::models::{SignUpRequest, SignInRequest};
 // use crate::auth::{hash_password, verify_password, create_jwt, verify_jwt, user_exists};
 // use std::env;
-// use uuid::Uuid;
+use uuid::Uuid;
 use crate::db::UserRepo;
+use serde_json;
 
 
 // Handler portion
@@ -14,7 +15,11 @@ pub async fn sign_up_user(
     payload: web::Json<SignUpRequest>,
 ) -> HttpResponse {
     match repo.sign_up(&payload).await {
-        Ok((user, token)) => HttpResponse::Created().json((user, token)),
+        Ok((user, token)) => HttpResponse::Created().json(serde_json::json!({
+            "message": "user successfully signed up",
+            "user": user,
+            "token": token,
+        })),
         Err(err) => {
             eprintln!("Error registering user: {:?}", err);
             HttpResponse::InternalServerError().finish()
@@ -27,7 +32,11 @@ pub async fn sign_in_user(
     payload: web::Json<SignInRequest>,
 ) -> HttpResponse {
     match repo.sign_in(&payload).await {
-        Ok((user, token)) => HttpResponse::Ok().json((user, token)),
+        Ok((user, token)) => HttpResponse::Ok().json(serde_json::json!({
+            "message": "user successfully signed in",
+            "user": user,
+            "token": token,
+        })),
         Err(err) => {
             eprintln!("Error signing in: {:?}", err);
             HttpResponse::Unauthorized().body("Invalid credentials")
@@ -50,8 +59,22 @@ pub async fn sign_out_user(
     };
 
     match repo.sign_out(&token).await {
-        Ok(_) => HttpResponse::Ok().body("Signed out"),
+        Ok(_) => HttpResponse::Ok().body("User Signed out succesfully"),
         Err(_) => HttpResponse::InternalServerError().finish(),
     }
 }
 
+pub async fn get_user(
+    repo: web::Data<UserRepo>,
+    path: web::Path<Uuid>,
+) -> HttpResponse {
+    let user_id = path.into_inner();
+    match repo.get_user_details(user_id).await {
+        Ok(p) => HttpResponse::Ok().json(p),
+        Err(sqlx::Error::RowNotFound) => HttpResponse::NotFound().body("Not found"),
+        Err(e) => {
+            eprintln!("DB error: {:?}", e);
+            HttpResponse::InternalServerError().body("DB error")
+        }
+    }
+}
