@@ -70,8 +70,8 @@ impl UserRepo {
 
         if !verify_password(&user.password, &password) {
             return Err(sqlx::Error::Protocol("Invalid credentials".into()));
-        } 
-        
+        }
+
         let token = create_jwt(user.id, &user.role, &secret)
             .map_err(|_| sqlx::Error::Protocol("Failed to create JWT".into()))?;
 
@@ -97,11 +97,11 @@ impl UserRepo {
         user_id: Uuid,
         req: &UpdateUserRequest
     ) -> Result<Users, sqlx::Error> {
-        let new_email = &req.email.as_deref();
-        let new_full_name = &req.full_name.as_deref();
-        let new_password = &req.password.as_deref();
-        let new_role = &req.role.as_ref();
-        let new_is_active = &req.is_active.as_ref();
+        let new_email = req.email.as_ref();
+        let new_full_name = req.full_name.as_ref();
+        let new_password = req.password.as_ref();
+        let new_role = req.role.as_ref();
+        let new_is_active = req.is_active;
         
         sqlx::query_as::<_, Users>(
             r#"
@@ -138,6 +138,24 @@ impl UserRepo {
         .execute(&self.pool)
         .await?;
         Ok(())
+    }
+
+    pub async fn get_user_details(
+        &self,
+        user_id: Uuid,
+    ) -> Result<Users, sqlx::Error> {
+        let user = sqlx::query_as::<_, Users>(
+            r#"
+            SELECT *
+            FROM users
+            WHERE id = $1
+            "#
+        )
+        .bind(user_id)
+        .fetch_one(&self.pool)
+        .await?;
+
+        Ok(user)
     }
 }
 

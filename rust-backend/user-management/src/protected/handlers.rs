@@ -9,6 +9,7 @@ use uuid::Uuid;
 use crate::db::UserRepo;
 // use actix_web::
 use crate::models::UserRole;
+use serde_json;
 
 pub async fn update_user_handler(
     req: HttpRequest,
@@ -30,7 +31,10 @@ pub async fn update_user_handler(
     }
 
     match repo.update_user(user_id, &payload).await {
-        Ok(user) => HttpResponse::Ok().json(user),
+        Ok(user) => HttpResponse::Ok().json(serde_json::json!({
+            "message": "user updated successfully",
+            "user": user,
+        })),
         Err(err) => HttpResponse::InternalServerError().body(err.to_string()),
     }
 }
@@ -54,7 +58,7 @@ pub async fn delete_user_handler(
     }
 
     match repo.delete_user(target_user_id).await {
-        Ok(_) => HttpResponse::Ok().body("User deleted"),
+        Ok(_) => HttpResponse::Ok().body("User deleted successully"),
         Err(err) => HttpResponse::InternalServerError().body(err.to_string()),
     }
 }

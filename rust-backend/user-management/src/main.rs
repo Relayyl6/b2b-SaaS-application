@@ -77,6 +77,7 @@ async fn main() -> std::io::Result<()> {
             .route("/signup", web::post().to(unprotected_handlers::sign_up_user))
             .route("/signin", web::post().to(unprotected_handlers::sign_in_user))
             .route("/signout", web::post().to(unprotected_handlers::sign_out_user))
+            .route("/get_user/{id}", web::get().to(unprotected_handlers::get_user))
     })
     .bind(format!("0.0.0.0:{}", port))?
     .run()
