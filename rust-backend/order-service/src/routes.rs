@@ -136,8 +136,10 @@ pub async fn update_status(
     // 2️⃣ Perform extra steps depending on the new status
     match updated_status {
         OrderStatus::Confirmed => {
-            // send email/notification/sms through notications (service),
-            // notify inventory (order service is notified from inventory. ),
+            // Trigger notification service (email/SMS)
+            // Optionally notify logistics (shipment preparation)
+            // Log audit entry
+            // this should be a redis listener for when the order.confirmed is gotten from inventory management, to update the order's status
             // publish event to logistics service (inventory management already does that when inventory.reserved, i.e.the product has been confirmed that the order wasnt already existing or the order hasnt expired)
             // TODO: add a listener for when inventory mangement sends ordr.confirmed when the roduct has ben reserved
             println!("Order {} confirmed", order_id);
