@@ -3,6 +3,7 @@ use uuid::Uuid;
 use reqwest::Client;
 use std::env;
 use serde::{Serialize, Deserialize};
+use crate::redis_pub::RedisPublisher;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ProductEvent {
@@ -18,6 +19,9 @@ pub struct ProductEvent {
     pub unit: Option<String>,
     pub quantity_change: Option<i32>,
     pub available: Option<bool>,
+    // Order-related
+    pub order_id: Option<Uuid>,
+    pub quantity: Option<i32>,
 }
 
 pub async fn create_product_from_event(_pool: &PgPool, event: ProductEvent) -> Result<(), Box<dyn std::error::Error>> {
@@ -96,6 +100,317 @@ pub async fn delete_product_from_event(_pool: &PgPool, event: ProductEvent) -> R
     } else {
         eprintln!("❌ Failed to delete product: {:?}", resp.text().await?);
     }
+
+    Ok(())
+}
+
+pub async fn reserve_stock_from_order(
+    pool: &PgPool,
+    event: ProductEvent
+) -> Result<(), Box<dyn std::error::Error>> {
+    let redis_url = env::var("REDIS_URL").map_err(|_| "REDIS_URL must be set in environment")?;
+    let redis_client = Client::open(redis_url.as_str())?;
+
+    let product_id = event.product_id.ok_or("Missing product_id")?;
+    let order_id = event.order_id.ok_or("Missing order_id")?;
+    let qty_requested = event.quantity.ok_or("Missing quantity")?;
+
+
+    reservation_ttl_secs = // add someting
+
+    // Atomically check & reserve stock
+    let mut tx = pool.begin().await?;
+
+    // ensure reservation for this order doesn't already exist (idempotency)
+    let existing: Option<(Uuid, i32)> = sqlx::query_as!(
+        r#"
+            SELECT reservation_id::uuid AS \"reservation_id!: Uuid\", qty 
+            FROM reservations 
+            WHERE order_id = $1
+        "#
+    )
+    .bind(order_id)
+    .fetch_optional(&mut *tx)
+    .await?;
+
+    if let Some((reservation_id, qty)) = existing {
+        tx.commit().await?;
+        let success_event = ProductEvent {
+            event_type: "inventory.reserved".into(),
+            product_id: Some(product_id),
+            order_id: Some(order_id),
+            quantity: Some(qty),
+            reservation_id: Some(reservation_id),
+            timestamp: Some(Utc::now().timestamp_millis()),
+            ..Default::default()
+        };
+        publish_event(redis_conn, "inventory.reserved", &success_event).await?;
+        return Ok(());
+    }
+
+    // get quantity as well as reserved if product wasnt already reserved 
+    let (qty, reserved) = sqlx::query_as::<_, (i32, i32)>(
+        r#"
+            SELECT quantity, reserved 
+            FROM inventory
+            WHERE product_id = $1 FOR UPDATE
+        "#
+    )
+    .bind(product_id)
+    .fetch_one(&mut *tx)
+    .await?;
+
+    let available = qty - reserved;
+
+    if available < qty_requested {
+        tx.rollback().await?;
+        // Publish REJECTED
+        let reject_event = ProductEvent {
+            event_type: "inventory.rejected".into(),
+            product_id: Some(product_id),
+            order_id: Some(order_id),
+            quantity: Some(qty_requested),
+            timestamp: Some(Utc::now().timestamp_millis())
+            ..Default::default()
+        };
+
+        redis_pub.publish(&reject_event, "inventory.rejected").await?;
+
+        return Ok(());
+    }
+
+    // Reserve stock
+    sqlx::query(
+        r#"
+            UPDATE inventory SET reserved = reserved + $1
+            WHERE product_id = $2
+        "#
+    )
+    .bind(qty_requested)
+    .bind(product_id)
+    .execute(&mut *tx)
+    .await?;
+
+    // insert reservation row (idempotency + expiry)
+    let reservation_id = Uuid::new_v4();
+    let expires_at = Utc::now() + Duration::seconds(reservation_ttl_secs);
+    sqlx::query!(
+        "INSERT INTO reservations (reservation_id, order_id, product_id, qty, expires_at, created_at, released) 
+        VALUES ($1, $2, $3, $4, $5, now(), false)",
+        reservation_id,
+        order_id,
+        product_id,
+        qty_requested,
+        expires_at
+    )
+    .execute(&mut *tx)
+    .await?;
+
+    tx.commit().await?;
+
+    // Publish success
+    let success_event = ProductEvent {
+        event_type: "inventory.reserved".into(),
+        product_id: Some(product_id),
+        order_id: Some(order_id),
+        quantity: Some(qty_requested),
+        reservation_id: Some(reservation_id),
+        timestamp: Some(Utc::now().timestamp_millis()),
+        ..Default::default()
+    };
+
+    // TODO: add resevervation_id, timestamp to produt event strucT
+
+    redis_pub.publish(&success_event, "inventory.reserved").await?;
+
+    println!("Stock Reserved for order {}", order_id);
+
+    Ok(())
+}
+
+// pub async fn release_stock_from_order(
+//     pool: &PgPool,
+//     event: ProductEvent
+// ) -> Result<(), Box<dyn std::error::Error>> {
+
+//     let product_id = event.product_id.ok_or("Missing product_id")?;
+//     let qty = event.quantity.ok_or("Missing quantity")?;
+
+//     sqlx::query(
+//         "UPDATE inventory SET reserved = reserved - $1 WHERE product_id = $2"
+//     )
+//     .bind(qty)
+//     .bind(product_id)
+//     .execute(pool)
+//     .await?;
+
+//     println!("Released {} units back to inventory", qty);
+
+//     Ok(())
+// }
+
+pub async fn release_stock_from_order(
+    pool: &PgPool,
+    event: ProductEvent,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let product_id = event.product_id.ok_or_else(|| anyhow::anyhow!("Missing product_id"))?;
+    let order_id = event.order_id.ok_or_else(|| anyhow::anyhow!("Missing order_id"))?;
+    let qty = event.quantity.ok_or_else(|| anyhow::anyhow!("Missing quantity"))?;
+
+    let mut tx = pool.begin().await?;
+
+    // Check reservation exists and amount is ok
+    let res_row = sqlx::query!(
+        r#"SELECT reservation_id, qty, released
+        FROM reservations
+        WHERE order_id = $1 FOR UPDATE
+        "#
+    )
+    .bind(order_id)
+    .fetch_optional(&mut *tx)
+    .await?;
+
+    if res_row.is_none() {
+        // nothing to release; idempotent success
+        tx.rollback().await?;
+        return Ok(());
+    }
+    let reservation_id: Uuid = res_row.unwrap().reservation_id;
+    let reserved_qty: i32 = res_row.unwrap().qty;
+    let released_flag: bool = res_row.unwrap().released;
+
+    if released_flag {
+        tx.rollback().await?;
+        return Ok(()); // already released
+    }
+
+    if qty > reserved_qty {
+        tx.rollback().await?;
+        return Err("release amount greater than reserved".into());
+    }
+
+    // decrement reserved safely
+    let res = sqlx::query!(
+        r#"
+            UPDATE inventory SET reserved = reserved - $1
+            WHERE product_id = $2 
+            AND reserved >= $1
+        "#
+    )
+    .bind(qty)
+    .bind(product_id)
+    .execute(&mut *tx)
+    .await?;
+
+    if res.rows_affected() == 0 {
+        tx.rollback().await?;
+        return Err("failed to update reserved (insufficient reserved)".into());
+    }
+
+    // mark reservation as released
+    sqlx::query!(
+        r#"
+            UPDATE reservations
+            SET released = true
+            WHERE reservation_id = $1
+        "#
+    )
+    .bind(reservation_id)
+    .execute(&mut *tx)
+    .await?;
+
+    tx.commit().await?;
+
+    // publish event AFTER commit
+    let release_event = ProductEvent {
+        event_type: "inventory.released".into(),
+        product_id: Some(product_id),
+        order_id: Some(order_id),
+        quantity: Some(qty),
+        reservation_id: Some(reservation_id),
+        timestamp: Some(Utc::now().timestamp_millis()),
+        ..Default::default()
+    };
+
+    if let Err(e) = redis_pub.publish(&release_event, "inventory.released").await {
+        eprintln!("Redis publish error (released): {}", e);
+    }
+
+    Ok(())
+}
+
+
+pub async fn finalize_order_after_payment(
+    pool: &PgPool,
+    event: ProductEvent,
+) -> Result<()> {
+    let product_id = event.product_id.ok_or_else(|| anyhow::anyhow!("Missing product_id"))?;
+    let order_id = event.order_id.ok_or_else(|| anyhow::anyhow!("Missing order_id"))?;
+    let qty = event.quantity.ok_or_else(|| anyhow::anyhow!("Missing quantity"))?;
+
+    let mut tx = pool.begin().await?;
+
+    // Option A: use reservations table
+    let res_row = sqlx::query!(
+        r#"SELECT reservation_id, qty, released FROM reservations WHERE order_id = $1 FOR UPDATE",
+        order_id
+    )
+    .fetch_optional(&mut *tx)
+    .await?;
+
+    if res_row.is_none() {
+        tx.rollback().await?;
+        return Err(anyhow::anyhow!("No reservation found for order"));
+    }
+    let reservation_id: Uuid = res_row.unwrap().reservation_id;
+    let reserved_qty: i32 = res_row.unwrap().qty;
+    let released_flag: bool = res_row.unwrap().released;
+
+    if released_flag {
+        tx.rollback().await?;
+        return Err(anyhow::anyhow!("Reservation already released"));
+    }
+
+    if qty > reserved_qty {
+        tx.rollback().await?;
+        return Err(anyhow::anyhow!("Payment quantity exceeds reserved"));
+    }
+
+    // Atomically decrement both reserved and quantity; ensure reserved >= qty
+    let res = sqlx::query!(
+        "UPDATE inventory SET reserved = reserved - $1, quantity = quantity - $1 WHERE product_id = $2 AND reserved >= $1 AND quantity >= $1",
+        qty,
+        product_id
+    )
+    .execute(&mut *tx)
+    .await?;
+
+    if res.rows_affected() == 0 {
+        tx.rollback().await?;
+        return Err(anyhow::anyhow!("failed to finalize: insufficient numbers"));
+    }
+
+    // mark reservation consumed
+    sqlx::query!(
+        "UPDATE reservations SET released = true WHERE reservation_id = $1",
+        reservation_id
+    )
+    .execute(&mut *tx)
+    .await?;
+
+    tx.commit().await?;
+
+    // publish event
+    let ev = ProductEvent {
+        event_type: "inventory.finalized".into(),
+        product_id: Some(product_id),
+        order_id: Some(order_id),
+        quantity: Some(qty),
+        reservation_id: Some(reservation_id),
+        timestamp: Some(Utc::now().timestamp_millis()),
+        ..Default::default()
+    };
+    publish_event(redis_conn, "inventory.finalized", &ev).await?;
 
     Ok(())
 }
