@@ -145,7 +145,7 @@ pub async fn update_status(
 
         OrderStatus::Cancelled => {
             // release inventory, refund payment, publish event
-            let event = OrderEvent {
+            let cancel_event = OrderEvent {
                 event_type: "order.cancelled".to_string(),
                 product_id: order.product_id,
                 supplier_id: order.supplier_id,
@@ -170,7 +170,7 @@ pub async fn update_status(
             };
 
 
-            if let Err(e) = redis_pub.publish("product.created", &event).await {
+            if let Err(e) = redis_pub.publish("order.cancelled", &cancel_event).await {
                 eprintln!("Redis publish error (product.created): {:?}", e);
             }
             println!("Order {} cancelled", order_id);
