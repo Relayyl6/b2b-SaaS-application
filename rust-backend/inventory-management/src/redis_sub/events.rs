@@ -15,7 +15,6 @@ pub struct ProductEvent {
     pub description: Option<String>,
     pub price: Option<f64>,
     pub category: Option<String>,
-    pub quantity: Option<i32>,
     pub low_stock_threshold: Option<i32>,
     pub unit: Option<String>,
     pub quantity_change: Option<i32>,
@@ -23,8 +22,13 @@ pub struct ProductEvent {
     // Order-related
     pub order_id: Option<Uuid>,
     pub quantity: Option<i32>,
+    pub reservation_id: Option<Uuid>,
+    pub timestamp: Option<i64>,
+    // pub status: OrderStatus,
 }
 
+// #[derive(Debug, Clone, Serialize, Deserialize, sqlx::Type, PartialEq, Eq)]
+// #[sqlx(type_name = "order_status", rename_all = "lowercase")]
 pub async fn create_product_from_event(_pool: &PgPool, event: ProductEvent) -> Result<(), Box<dyn std::error::Error>> {
 
     let client = Client::new();
@@ -109,15 +113,80 @@ pub async fn reserve_stock_from_order(
     pool: &PgPool,
     event: ProductEvent
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let redis_url = env::var("REDIS_URL").map_err(|_| "REDIS_URL must be set in environment")?;
-    let redis_client = Client::open(redis_url.as_str())?;
+
+    // check the expiration date of the order
+    // Find all expired reservations that have not been released
+    let expired_reservations = sqlx::query!(
+        r#"
+            SELECT reservation_id, order_id, product_id, qty
+            FROM reservations
+            WHERE expires_at <= NOW()
+            AND released = false
+            FOR UPDATE
+        "#
+    )
+    .fetch_all(pool)
+    .await?;
+
+    // Process each expired reservation
+    for r in expired_reservations {
+        // Release inventory
+        sqlx::query!(
+            r#"
+                UPDATE inventory
+                SET reserved = reserved - $1
+                WHERE product_id = $2
+            "#,
+            r.qty,
+            r.product_id
+        )
+        .execute(pool)
+        .await?;
+
+        // Mark the reservation as released
+        sqlx::query!(
+            r#"
+                UPDATE reservations
+                SET released = true
+                WHERE reservation_id = $1
+            "#,
+            r.reservation_id
+        )
+        .execute(pool)
+        .await?;
+
+        // Publish cancellation event
+        let cancel_event = ProductEvent {
+            event_type: "inventory.expired".into(),
+            product_id: Some(r.product_id),
+            order_id: Some(r.order_id),
+            quantity: Some(r.qty),
+            reservation_id: Some(r.reservation_id),
+            timestamp: Some(Utc::now().timestamp_millis()),
+            ..Default::default()
+        };
+
+        for event in &["inventory.expired", "order.failed"] {
+            if let Err(e) = redis_pub.publish(event, &cancel_event).await {
+                eprintln!("Redis publish error (expired): {}", e);
+
+                tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                continue;
+            }
+        }
+
+        println!(
+            "Expired reservation {} for order {} was released.",
+            r.reservation_id, r.order_id
+        );
+    }
 
     let product_id = event.product_id.ok_or("Missing product_id")?;
     let order_id = event.order_id.ok_or("Missing order_id")?;
     let qty_requested = event.quantity.ok_or("Missing quantity")?;
 
 
-    reservation_ttl_secs = // add someting
+    reservation_ttl_secs = 2 * 24 * 60 * 60 // adjust timing, configurable to add flexibility for when the customer is able to pay
 
     // Atomically check & reserve stock
     let mut tx = pool.begin().await?;
@@ -147,7 +216,7 @@ pub async fn reserve_stock_from_order(
         };
 
         for event in &["inventory.reserved", "order.confirmed"] {
-            if let Err(e) = redis_pub.publish(&success_event, event).await {
+            if let Err(e) = redis_pub.publish(event, &success_event).await {
                 eprintln!("Redis publish error (reserved): {}", e);
 
                  // wait before retrying
@@ -187,7 +256,7 @@ pub async fn reserve_stock_from_order(
         };
 
         for event in &["inventory.rejected", "order.failed"] {
-            if let Err(e) = redis_pub.publish(&success_event, event).await {
+            if let Err(e) = redis_pub.publish(event, &reject_event).await {
                 eprintln!("Redis inventory.rejected publish error (reserved): {}", e);
 
                  // wait before retrying
@@ -244,7 +313,7 @@ pub async fn reserve_stock_from_order(
     // TODO: add resevervation_id, timestamp to produt event struct
 
     for event in &["inventory.reserved", "order.confirmed"] {
-        if let Err(e) = redis_pub.publish(&success_event, event).await {
+        if let Err(e) = redis_pub.publish(event, &success_event).await {
             eprintln!("Redis publish error (reserved): {}", e);
              // wait before retrying
             tokio::time::sleep(std::time::Duration::from_secs(5)).await;
@@ -342,7 +411,7 @@ pub async fn release_stock_from_order(
     };
 
     for event in &["inventory.released", "order.cancelled"] {
-        if let Err(e) = redis_pub.publish(&success_event, event).await {
+        if let Err(e) = redis_pub.publish(event, &release_event).await {
             eprintln!("Redis publish error (released): {}", e);
              // wait before retrying
             tokio::time::sleep(std::time::Duration::from_secs(5)).await;
@@ -439,8 +508,8 @@ pub async fn finalize_order_after_payment(
         ..Default::default()
     };
 
-    for event in &["inventory.finalized", "order.confirmed"] {
-        if let Err(e) = redis_pub.publish(&finalised_event, event).await {
+    for event in &["inventory.finalized", "order.shipped"] {
+        if let Err(e) = redis_pub.publish(event, &finalised_event).await {
             eprintln!("Redis publish error (finalized): {}", e);
              // wait before retrying
             tokio::time::sleep(std::time::Duration::from_secs(5)).await;

@@ -34,7 +34,20 @@ async fn main() -> std::io::Result<()> {
     }
 
     let repo = web::Data::new(db::InventoryRepo::new(&pool));
-    let redis_pub = web::Data::new(redis_pub::RedisPublisher::new(&redis_url));
+    let redis_pub = match &redis_url {
+        Some(url) => match RedisPublisher::new(url).await {
+            Ok(pubw) => web::Data::new(pubw),
+            Err(e) => {
+                eprintln!("⚠️ Failed to connect to Redis: {:?}", e);
+                eprintln!("⚠️ Continuing without Redis publishing capabilities...");
+                web::Data::new(RedisPublisher::new_noop())
+            }
+        },
+        None => {
+            eprintln!("⚠️ No REDIS_URL configured — using no-op publisher");
+            web::Data::new(RedisPublisher::new_noop())
+        }
+    };
     let redis_client = web::Data::new(Client::open(redis_url).unwrap());
 
     // let redis_client = redis::Client::open(redis_url).expect("Failed to create Redis client");
