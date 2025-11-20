@@ -24,3 +24,16 @@ ALTER COLUMN price TYPE DOUBLE PRECISION USING price::double precision;
 
 ALTER TABLE inventory
 ADD COLUMN available BOOLEAN NOT NULL DEFAULT TRUE;
+
+ALTER TABLE inventory 
+ADD COLUMN IF NOTE EXISTS reserved INTEGER NOT NULL DEFAULT 0;
+
+CREATE TABLE IF NOT EXISTS reservations (
+    reservation_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    order_id UUID NOT NULL UNIQUE,
+    product_id UUID NOT NULL,
+    qty INT NOT NULL,
+    expires_at timestamptz,
+    created_at timestamptz DEFAULT now(),
+    released BOOLEAN NOT NULL DEFAULT FALSE
+);

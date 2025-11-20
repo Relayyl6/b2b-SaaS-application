@@ -35,7 +35,7 @@ pub async fn listen_to_redis_events(pool: PgPool) -> Result<(), Box<dyn std::err
         let mut pubsub = conn.into_pubsub();
 
         // Subscribe to all product channels in one go
-        for channel in &["product.created", "product.updated", "product.deleted"] {
+        for channel in &["product.created", "product.updated", "product.deleted", "order.created", "order.cancelled"] {
             if let Err(e) = pubsub.subscribe(channel).await {
                 eprintln!("❌ Failed to subscribe to {}: {:?}", channel, e);
                 // wait before retrying subscription
@@ -45,12 +45,8 @@ pub async fn listen_to_redis_events(pool: PgPool) -> Result<(), Box<dyn std::err
         }
         
         println!("📡 Subscribed to all product events");
-        
-
 
         let mut stream = pubsub.on_message();
-
-
 
         while let Some(msg) = stream.next().await {
             let payload: String = match msg.get_payload() {
@@ -87,6 +83,21 @@ pub async fn listen_to_redis_events(pool: PgPool) -> Result<(), Box<dyn std::err
                 "product.deleted" => {
                     if let Err(e) = delete_product_from_event(&pool, event.clone()).await {
                         eprintln!("Error handling product.deleted: {:?}", e);
+                    }
+                }
+                "order.created" => {
+                    if let Err(e) = reserve_stock_from_order($pool, event.clone()).await {
+                        println!("Error handling order.created: {:?}", e);
+                    }
+                }
+                "order.cancelled" => {
+                    if let Err(e) = release_stock_from_order($pool, event.clone()).await {
+                        println!("Error handling order.cancelled: {:?}", e);
+                    }
+                }
+                "payment.success" => {
+                    if let Err(e) = finalize_stock($pool, event.clone()).await {
+                        println!("Error handling payment.success: {:?}", e);
                     }
                 }
                 other => {
