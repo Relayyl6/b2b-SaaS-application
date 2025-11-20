@@ -5,43 +5,36 @@ use uuid::Uuid;
 pub struct Order {
     pub id: Uuid,
     pub product_id: Uuid,
-    pub restaurant_id: Uuid,
+    pub user_id: Uuid,
     pub supplier_id: Uuid,
     pub items: serde_json::Value,
     pub qty: Option<i32>
-    pub status: UpdateOrderStatus,
+    pub status: OrderStatus,
 }
 
 #[derive(Deserialize)]
 pub struct CreateOrderRequest {
-    pub restaurant_id: Uuid,
+    pub user_id: Uuid,
     pub supplier_id: Uuid,
+    pub product_id: Uuid,
+    pub qty: i32,
     pub items: serde_json::Value,
+}
+
+pub struct UpdateOrderStatus {
+    pub product_id: Uuid,
+    pub new_status: OrderStatus,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::Type, PartialEq, Eq)]
 #[sqlx(type_name = "order_status", rename_all = "lowercase")]
-pub enum UpdateOrderStatus {
+pub enum OrderStatus {
     Pending,
+    Confirmed,
     Shipped,
     Delivered,
+    Cancelled,
     Failed
 }
 
-// -- products inventory
-CREATE TABLE inventory (
-    product_id UUID PRIMARY KEY,
-    stock integer NOT NULL DEFAULT 0,
-    updated_at timestamptz DEFAULT now()
-);
-
-// -- reservations
-CREATE TABLE reservations (
-    reservation_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    order_id UUID NOT NULL,
-    product_id UUID NOT NULL,
-    qty integer NOT NULL,
-    expires_at timestamptz,
-    created_at timestamptz DEFAULT now(),
-    released boolean NOT NULL DEFAULT FALSE
-);
+// -- products inventor
