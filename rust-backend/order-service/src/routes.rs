@@ -180,6 +180,11 @@ pub async fn update_status(
 
         OrderStatus::Delivered => {
             // mark delivery timestamp, request review, receive event from logistics service
+            // instead of, delete order from order table after a timestamp
+            // No.
+            // Do soft delete: ALTER TABLE orders ADD COLUMN deleted_at TIMESTAMPTZ NULL;
+            // Then mark delivered orders as: UPDATE orders SET deleted_at = now() WHERE id = ?
+
             println!("Order {} delivered", order_id);
         }
 
