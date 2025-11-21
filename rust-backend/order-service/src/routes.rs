@@ -173,7 +173,7 @@ pub async fn update_status(
 
 
             if let Err(e) = redis_pub.publish("order.cancelled", &cancel_event).await {
-                eprintln!("Redis publish error (product.created): {:?}", e);
+                eprintln!("Redis publish error (order.cancelled): {:?}", e);
             }
             println!("Order {} cancelled", order_id);
         }
@@ -190,6 +190,10 @@ pub async fn update_status(
 
         OrderStatus::Pending => {
             // maybe nothing
+            // Add expires_at to orders
+            // Run a cron job or background task to auto-expire pending orders
+            // Emit order.expired
+            // Let Inventory handle release
             println!("Order {} set to Pending", order_id);
         }
 
