@@ -4,6 +4,7 @@ mod db;
 mod redis_pub;
 mod handlers;
 mod redis_sub;
+mod worker;
 
 use actix_web::{web, App, HttpServer};
 use dotenvy::dotenv;
@@ -12,6 +13,8 @@ use tokio::spawn;
 use sqlx::postgres::PgPoolOptions;
 use redis::Client;
 use crate::redis_sub::listen_to_redis_events;
+
+use crate::worker::reservation_worker as reservation_worker;
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
@@ -49,6 +52,8 @@ async fn main() -> std::io::Result<()> {
         }
     };
     let redis_client = web::Data::new(Client::open(redis_url).unwrap());
+
+    reservation_worker::start_reservation_expiration_worker(pool.clone(), redis_pub.clone()).await;
 
     // let redis_client = redis::Client::open(redis_url).expect("Failed to create Redis client");
     let _redis_conn = redis_client.get_async_connection().await.expect("Redis connection failed");

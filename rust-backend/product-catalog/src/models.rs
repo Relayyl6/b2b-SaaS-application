@@ -56,16 +56,24 @@ pub struct BulkCreateRequest {
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct ProductEvent {
-    pub event_type: String, // "created" | "updated" | "deleted"
+
+pub struct ProductEvent {
+    pub event_type: String,
     pub product_id: Uuid,
     pub supplier_id: Uuid,
     pub name: Option<String>,
     pub description: Option<String>,
     pub price: Option<f64>,
     pub category: Option<String>,
-    pub quantity: Option<i32>,
     pub low_stock_threshold: Option<i32>,
     pub unit: Option<String>,
     pub quantity_change: Option<i32>,
-    pub available: Option<bool>
+    pub available: Option<bool>,
+    // Order-related
+    pub order_id: Option<Uuid>,
+    pub quantity: Option<i32>,
+    pub reservation_id: Option<Uuid>,
+    pub timestamp: Option<i64>,
+    pub expires_at: Option<i64>,
+    // pub status: OrderStatus,
 }

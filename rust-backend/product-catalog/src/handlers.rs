@@ -29,10 +29,11 @@ pub async fn create_product(
                 low_stock_threshold: None,
                 unit: Some(product.unit.clone()),
                 quantity_change: None,
-                available: None,
-                order_id: None,
-                reservation_id: None,
-                timestamp: None,
+                // available: None,
+                // order_id: None,
+                // reservation_id: None,
+                // timestamp: None,
+                ..Default::default()
             };
 
             if let Err(e) = redis_pub.publish("product.created", &event).await {
@@ -107,9 +108,10 @@ pub async fn update_product(
                 unit: Some(p.unit.clone()),
                 quantity_change: update_data.quantity_change,
                 available: Some(p.available),
-                order_id: None,
-                reservation_id: None,
-                timestamp: None,
+                // order_id: None,
+                // reservation_id: None,
+                // timestamp: None,
+                ..Default::default()
             };
 
             if let Err(e) = redis_pub.publish("product.updated", &event).await {
@@ -211,10 +213,11 @@ pub async fn bulk_create(
                     low_stock_threshold: None,
                     unit: Some(p.unit.clone()),
                     quantity_change: None,
-                    available: None,
-                    order_id: None,
-                    reservation_id: None,
-                    timestamp: None,
+                    // available: None,
+                    // order_id: None,
+                    // reservation_id: None,
+                    // timestamp: None,
+                    ..Default::default()
                 };
 
                 if let Err(e) = redis_pub.publish("product.created", &event).await {

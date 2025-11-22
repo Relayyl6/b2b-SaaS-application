@@ -1,6 +1,6 @@
 use sqlx::{Pool, Postgres};
 use std::env;
-use dotenv::dotenv;
+use dotenvy::dotenv;
 
 pub async fn get_db_pool() -> Pool<Postgres> {
     dotenv().ok();
