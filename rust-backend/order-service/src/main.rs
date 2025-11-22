@@ -1,18 +1,22 @@
 use actix_web::{App, HttpServer, web};
-use dotenv::dotenv;
-use std::env;
 
 mod db;
 mod models;
 mod routes;
 mod redis_pub;
+mod worker;
+mod redis_sub;
+use tokio::spawn;
+
+use crate::worker::order_expiration_worker as expiration_worker;
 
 use crate::redis_pub::RedisPublisher;
 use redis::Client as RedisClient;
 
 use dotenvy::dotenv;
 use std::env;
-use sqlx::PgPool;
+
+use crate::redis_sub::listen_to_redis_events;
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
@@ -22,7 +26,7 @@ async fn main() -> std::io::Result<()> {
     // let port = env::var("PORT").unwrap_or_else(|_| "3001".to_string());
     let database_url = env::var("DATABASE_URL").expect("Database url must be set in the environment variable");
     let redis_url = env::var("REDIS_URL").ok();
-    let port = env::var("PORT").unwrap_or_else(|_| "3004".to_string());
+    let port = env::var("PORT").unwrap_or_else(|_| "3006".to_string());
 
     let host = env::var("HOST").unwrap_or_else(|_| "localhost".to_string());
     let addr = format!("{}:{}", host, port);
@@ -47,7 +51,15 @@ async fn main() -> std::io::Result<()> {
         }
     };
 
-    println!("🚀 Order Service running at http://localhost:{}", addr);
+    expiration_worker::start_order_expiration_worker(pool.clone(), redis_pub.clone()).await;
+
+    // spawn Redis listener in background
+    let pool_clone = pool.clone();
+    spawn(async move {
+        let _ = listen_to_redis_events(pool_clone).await;
+    });
+
+    println!("🚀 Order Service running at http://{}", addr);
 
     HttpServer::new(move || {
         App::new()

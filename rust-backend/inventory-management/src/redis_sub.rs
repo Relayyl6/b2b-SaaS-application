@@ -10,14 +10,13 @@ use serde_json;
 use tokio;
 
 mod events;
-use events::{create_product_from_event, update_product_from_event, delete_product_from_event};
+use events::{create_product_from_event, update_product_from_event, delete_product_from_event, reserve_stock_from_order, release_stock_from_order, finalize_order_after_payment};
 
 use futures_util::StreamExt;
 
 #[allow(deprecated)]
 pub async fn listen_to_redis_events(pool: PgPool) -> Result<(), Box<dyn std::error::Error>> {
     let redis_url = env::var("REDIS_URL").map_err(|_| "REDIS_URL must be set in environment")?;
-
 
     // Main loop: wait for messages and handle each one.
     loop {
@@ -35,7 +34,7 @@ pub async fn listen_to_redis_events(pool: PgPool) -> Result<(), Box<dyn std::err
         let mut pubsub = conn.into_pubsub();
 
         // Subscribe to all product channels in one go
-        for channel in &["product.created", "product.updated", "product.deleted", "order.created", "order.cancelled"] {
+        for channel in &["product.created", "product.updated", "product.deleted", "order.created", "order.cancelled", "payment.success"] {
             if let Err(e) = pubsub.subscribe(channel).await {
                 eprintln!("❌ Failed to subscribe to {}: {:?}", channel, e);
                 // wait before retrying subscription
@@ -96,7 +95,7 @@ pub async fn listen_to_redis_events(pool: PgPool) -> Result<(), Box<dyn std::err
                     }
                 }
                 "payment.success" => {
-                    if let Err(e) = finalize_stock($pool, event.clone()).await {
+                    if let Err(e) = finalize_order_after_payment($pool, event.clone()).await {
                         println!("Error handling payment.success: {:?}", e);
                     }
                 }
