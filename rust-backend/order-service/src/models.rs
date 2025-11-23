@@ -1,7 +1,10 @@
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
+use sqlx::FromRow;
+use serde_json;
+use chrono::{DateTime, Utc};
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, FromRow)]
 pub struct Order {
     pub id: Uuid,
     pub product_id: Uuid,
@@ -10,7 +13,7 @@ pub struct Order {
     pub items: serde_json::Value,
     pub qty: Option<i32>,
     pub status: OrderStatus,
-    pub expires_at: Option<i64>,
+    pub expires_at: DateTime<Utc>,
     pub timestamp: Option<i64>,
 }
 
@@ -21,14 +24,17 @@ pub struct CreateOrderRequest {
     pub supplier_id: Uuid,
     pub product_id: Uuid,
     pub qty: i32,
+    pub status: Option<OrderStatus>,
     pub items: serde_json::Value,
 }
 
+#[derive(Deserialize)]
 pub struct UpdateOrderStatus {
     pub id: Uuid,
-    pub product_id: Uuid,
+    pub product_id: Option<Uuid>,
     pub user_id: Option<Uuid>,
-    pub new_status: OrderStatus,
+    pub new_status: Option<OrderStatus>,
+    pub expires_at: Option<DateTime<Utc>>,
     pub timestamp: Option<i64>,
 }
 
@@ -43,7 +49,7 @@ pub enum OrderStatus {
     Failed
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, Default)]
 pub struct OrderEvent {
     pub event_type: String,
     pub product_id: Uuid,
@@ -61,7 +67,7 @@ pub struct OrderEvent {
     pub quantity: Option<i32>,
     pub reservation_id: Option<Uuid>,
     pub timestamp: Option<i64>,
-    pub expires_at: Option<i64>,
+    pub expires_at: DateTime<Utc>,
     pub user_id: Option<Uuid>,
     // pub status: OrderStatus,
 }

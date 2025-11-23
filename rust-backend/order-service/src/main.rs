@@ -22,9 +22,6 @@ use crate::redis_sub::listen_to_redis_events;
 async fn main() -> std::io::Result<()> {
     dotenv().ok();
 
-    // let host = env::var("HOST").unwrap_or_else(|_| "127.0.0.1".to_string());
-    // let port = env::var("PORT").unwrap_or_else(|_| "3001".to_string());
-    let database_url = env::var("DATABASE_URL").expect("Database url must be set in the environment variable");
     let redis_url = env::var("REDIS_URL").ok();
     let port = env::var("PORT").unwrap_or_else(|_| "3006".to_string());
 
@@ -35,7 +32,7 @@ async fn main() -> std::io::Result<()> {
 
     sqlx::migrate!("./migrations").run(&pool).await.expect("Migrations Failed");
 
-    let redis_client = web::Data::new(RedisClient::open(redis_url.unwrap()).expect("redis client"));
+    let redis_client = web::Data::new(RedisClient::open(redis_url.clone().unwrap()).expect("redis client"));
     let redis_pub = match &redis_url {
         Some(url) => match RedisPublisher::new(url).await {
             Ok(pubw) => web::Data::new(pubw),
@@ -51,7 +48,7 @@ async fn main() -> std::io::Result<()> {
         }
     };
 
-    expiration_worker::start_order_expiration_worker(pool.clone(), redis_pub.clone()).await;
+    expiration_worker::start_order_expiration_worker(pool.clone(), redis_pub.get_ref().clone()).await;
 
     // spawn Redis listener in background
     let pool_clone = pool.clone();

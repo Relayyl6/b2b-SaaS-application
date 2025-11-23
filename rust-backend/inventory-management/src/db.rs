@@ -47,7 +47,7 @@ impl InventoryRepo {
                 low_stock_threshold = COALESCE($9, low_stock_threshold),
                 updated_at = NOW()
             WHERE supplier_id = $10 AND product_id = $11
-            RETURNING id, product_id, supplier_id, name, description, category, price, unit, quantity, available, low_stock_threshold, created_at, updated_at
+            RETURNING *
             "#
         )
         .bind(req.name.as_ref())
