@@ -34,7 +34,7 @@ pub async fn listen_to_redis_events(pool: PgPool) -> Result<(), Box<dyn std::err
         let mut pubsub = conn.into_pubsub();
 
         // Subscribe to all product channels in one go
-        for channel in &["product.created", "product.updated", "product.deleted", "order.created", "order.cancelled", "payment.success"] {
+        for channel in &["product.created", "product.updated", "product.deleted", "order.created", "order.cancelled", "order.failed", "payment.success"] {
             if let Err(e) = pubsub.subscribe(channel).await {
                 eprintln!("❌ Failed to subscribe to {}: {:?}", channel, e);
                 // wait before retrying subscription
@@ -90,6 +90,11 @@ pub async fn listen_to_redis_events(pool: PgPool) -> Result<(), Box<dyn std::err
                     }
                 }
                 "order.cancelled" => {
+                    if let Err(e) = release_stock_from_order($pool, event.clone()).await {
+                        println!("Error handling order.cancelled: {:?}", e);
+                    }
+                }
+                "order.failed" => {
                     if let Err(e) = release_stock_from_order($pool, event.clone()).await {
                         println!("Error handling order.cancelled: {:?}", e);
                     }

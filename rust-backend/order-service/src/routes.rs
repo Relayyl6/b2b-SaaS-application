@@ -1,4 +1,4 @@
-use actix_web::{get, post, put, web, HttpResponse};
+use actix_web::{get, post, put, delete, web, HttpResponse};
 use sqlx::PgPool;
 use uuid::Uuid;
 use serde_json::json;
@@ -16,8 +16,7 @@ pub async fn create_order(
 ) -> HttpResponse {
     let order_id = Uuid::new_v4();
     let status = req.status.clone().unwrap_or(OrderStatus::Pending);
-    let qty = req.qty;
-    let timestamp = Utc::now().timestamp_millis();
+    let order_timestamp = Utc::now();
 
     // adjust timing, configurable to add flexibility for when the customer is able to pay
     let expires_at = Utc::now() + Duration::seconds(2 * 24 * 60 * 60);
@@ -34,10 +33,10 @@ pub async fn create_order(
     .bind(req.supplier_id)
     .bind(req.product_id)
     .bind(&req.items)
-    .bind(qty)
+    .bind(req.qty)
     .bind(status)
     .bind(expires_at)
-    .bind(timestamp)
+    .bind(order_timestamp)
     .fetch_one(pool.get_ref())
     .await;
 
@@ -65,8 +64,8 @@ pub async fn create_order(
                 user_id: Some(order.user_id),
                 expires_at: order.expires_at,
 
-                // Add timestamp for event ordering
-                timestamp: Some(Utc::now().timestamp_millis()),
+                // Add order_timestamp for event ordering
+                order_timestamp: order.order_timestamp,
 
                 ..Default::default()
             };
@@ -78,7 +77,7 @@ pub async fn create_order(
 
             HttpResponse::Created().json(serde_json::json!({
                 "message": "Order successfully created",
-                "id": order_id,
+                "id": order,
             }))
         },
         Err(err) => {
@@ -120,7 +119,8 @@ pub async fn update_status(
 ) -> HttpResponse {
     let order_id = path.into_inner();
     let new_status = req.new_status.clone().unwrap_or(OrderStatus::Pending);
-    let timestamp = req.timestamp.unwrap_or(Utc::now().timestamp_millis());
+    let user_id = req.user_id;
+    let order_timestamp = req.order_timestamp.unwrap_or(Utc::now());
     let expires_at = req.expires_at.unwrap_or(
         Utc::now() + Duration::seconds(2 * 24 * 60 * 60)
     );
@@ -130,20 +130,21 @@ pub async fn update_status(
     let result = sqlx::query_as::<_, Order>(
         r#"
             UPDATE orders
-            SET status = COALESCE($1, status)
-            SET items = COALESCE($2, items)
-            SET order_timestamp = COALESCE($3, order_timestamp)
-            SET expires_at = COALESCE($4, expires_at)
-            WHERE id = $5 AND product_id = $6
+            SET
+                status = COALESCE($1, status),
+                order_timestamp = COALESCE($2, order_timestamp),
+                expires_at = COALESCE($3, expires_at),
+                updated_at = NOW()
+            WHERE id = $4 AND product_id = $5 AND user_id = $6
             RETURNING *
         "#
     )
     .bind(new_status)
-    .bind(req.user_id)
-    .bind(timestamp)
+    .bind(order_timestamp)
     .bind(expires_at)
     .bind(order_id)
     .bind(product_id)
+    .bind(user_id)
     .fetch_one(pool.get_ref())
     .await;
 
@@ -157,7 +158,7 @@ pub async fn update_status(
                     // this should be a redis listener for when the order.failed is gotten from inventory management, to update the order's status
                     // publish event to logistics service (inventory management already does that when inventory.reserved, i.e.the product has been confirmed that the order wasnt already existing or the order hasnt expired)
                     // TODO: add a listener for when inventory mangement sends ordr.failed when the product has ben expired or rejected
-                    println!("Order {} confirmed", order.id);
+                    println!("Order {} failed", order.id);
                 }
 
                 OrderStatus::Confirmed => {
@@ -194,8 +195,8 @@ pub async fn update_status(
                         expires_at: order.expires_at,
                         user_id: Some(order.user_id),
 
-                        // Add timestamp for event ordering
-                        timestamp: Some(Utc::now().timestamp_millis()),
+                        // Add order_timestamp for event ordering
+                        order_timestamp: order.order_timestamp,
                     };
 
 
@@ -206,8 +207,8 @@ pub async fn update_status(
                 }
 
                 OrderStatus::Delivered => {
-                    // mark delivery timestamp, request review, receive event from logistics service
-                    // instead of, delete order from order table after a timestamp
+                    // mark delivery order_timestamp, request review, receive event from logistics service
+                    // instead of, delete order from order table after a order_timestamp
                     // No.
                     // Do soft delete: ALTER TABLE orders ADD COLUMN deleted_at TIMESTAMPTZ NULL;
                     // Then mark delivered orders as: UPDATE orders SET deleted_at = now() WHERE id = ?
@@ -222,38 +223,6 @@ pub async fn update_status(
                     // Emit order.expired
                     // Let Inventory handle release
                     // I realise now, if stuff is edited from a pending (not yet confirmed or failed order, then it should publish an event. Inventory checks if its existing already)
-                    let updated_event = OrderEvent {
-                        event_type: "order.created".to_string(),
-                        product_id: order.product_id,
-                        supplier_id: order.supplier_id,
-
-                        // Product-related fields (None since this event is order-based, their implementation is in product catalog)
-                        // name: None,
-                        // description: None,
-                        // price: None,
-                        // category: None,
-                        // low_stock_threshold: None,
-                        // unit: None,
-                        // quantity_change: None,
-                        // available: None,
-
-                        // Order-related fields
-                        order_id: Some(order.id),
-                        quantity: order.qty,
-                        reservation_id: None,
-                        user_id: Some(order.user_id),
-                        expires_at: order.expires_at,
-
-                        // Add timestamp for event ordering
-                        timestamp: Some(Utc::now().timestamp_millis()),
-
-                        ..Default::default()
-                    };
-                
-                
-                    if let Err(e) = redis_pub.publish("order.updated", &updated_event).await {
-                        eprintln!("Redis publish error (order.created): {:?}", e);
-                    }
 
                     println!("Order {} set to Pending", order.id);
                 }
@@ -267,7 +236,7 @@ pub async fn update_status(
             // Response
             HttpResponse::Ok().json(serde_json::json!({
                 "message": "Order status updated",
-                "status": order.status
+                "status": order
             }))
         },
         Err(sqlx::Error::RowNotFound) => {
@@ -284,4 +253,34 @@ pub async fn update_status(
 }
 
 // implement route to delete an order, not: only updating orders, cancelling it and deleting it is allowed.
-// TODO: add a timestamp to the delete route, after a certain amount o time, orders still pending wil be automatically deleted
+// TODO: add a order_timestamp to the delete route, after a certain amount o time, orders still pending wil be automatically deleted
+
+#[delete("/orders/{id}/{user_id}")]
+pub async fn delete_order(
+    redis_pub: web::Data<RedisPublisher>,
+    pool: web::Data<PgPool>,
+    path: web::Path<(Uuid, Uuid)>
+) -> HttpResponse {
+    let (order_id, user_id) = path.into_inner();
+    let result = sqlx::query!(
+        r#"
+            DELETE FROM orders WHERE id = $1 AND user_id = $2
+        "#,
+        order_id,
+        user_id
+    )
+    .execute(pool.get_ref())
+    .await;
+
+    match result {
+        Ok(row) if row.rows_affected() > 0 => {
+            // redis_pub.publish("order.deleted", &event).await.unwrap();
+            HttpResponse::Ok().body("Order deleted successfully")
+        },
+        Ok(_) => HttpResponse::NotFound().body("Not found"),
+        Err(e) => {
+            eprintln!("DB error deleting order: {:?}", e);
+            HttpResponse::InternalServerError().body("DB error")
+        }
+    }
+}
