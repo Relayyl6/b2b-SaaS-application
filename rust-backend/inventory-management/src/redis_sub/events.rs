@@ -145,7 +145,7 @@ pub async fn reserve_stock_from_order(
         .execute(pool)
         .await?;
 
-        // Mark the reservation as released
+        // Mark the reservation as released, or call it expired
         sqlx::query!(
             r#"
                 UPDATE reservations
@@ -159,7 +159,7 @@ pub async fn reserve_stock_from_order(
 
         // Publish cancellation event
         let cancel_event = ProductEvent {
-            event_type: "inventory.expired".into(), // it's meant to be "inventory.expired", but my oder service is listening and i wanted it to hear order.failed 
+            event_type: "inventory.expired".into(), // it's meant to be "order.failed", but my order service is listening and i wanted it to hear something different, maybe it'll have other uses subsequently
             product_id: Some(r.product_id),
             order_id: Some(r.order_id),
             quantity: Some(r.qty),
@@ -169,7 +169,7 @@ pub async fn reserve_stock_from_order(
             ..Default::default()
         };
 
-        for event in &["inventory.expired", "order.cancelled"] { // these two events are analogous
+        for event in &["inventory.expired"] { // , "order.cancelled"       these two events are analogous
             if let Err(e) = redis_pub.publish(event, &cancel_event).await {
                 eprintln!("Redis publish error (expired): {}", e);
 
@@ -223,7 +223,7 @@ pub async fn reserve_stock_from_order(
             ..Default::default()
         };
 
-        for event in &["inventory.reserved", "order.confirmed"] {
+        for event in &["inventory.reserved"] { // ,  "order.confirmed"
             if let Err(e) = redis_pub.publish(event, &success_event).await {
                 eprintln!("Redis publish error (reserved): {}", e);
 
@@ -236,7 +236,7 @@ pub async fn reserve_stock_from_order(
         return Ok(());
     }
 
-    // get quantity as well as reserved if product wasnt already reserved 
+    // get quantity as well as reserved, to compare them to see if the requested quantity is less than what is avaialable
     let (qty, reserved) = sqlx::query_as::<_, (i32, i32)>(
         r#"
             SELECT quantity, reserved
@@ -260,13 +260,13 @@ pub async fn reserve_stock_from_order(
             order_id: Some(order_id),
             quantity: Some(qty_requested),
             user_id: Some(user_id),
-            timestamp: Some(Utc::now().timestamp_millis())
+            timestamp: Some(Utc::now().timestamp_millis()),
             ..Default::default()
         };
 
-        for event in &["inventory.rejected", "order.failed"] {
+        for event in &["inventory.rejected"] { // , "order.failed"
             if let Err(e) = redis_pub.publish(event, &reject_event).await {
-                eprintln!("Redis inventory.rejected publish error (reserved): {}", e);
+                eprintln!("Redis inventory.rejected publish error (insuffieient stock): {}", e);
 
                  // wait before retrying
                 tokio::time::sleep(std::time::Duration::from_secs(5)).await;
@@ -325,7 +325,7 @@ pub async fn reserve_stock_from_order(
     };
 
 
-    for event in &["inventory.reserved", "order.confirmed"] {
+    for event in &["inventory.reserved"] { //  , "order.confirmed"
         if let Err(e) = redis_pub.publish(event, &success_event).await {
             eprintln!("Redis publish error (reserved): {}", e);
              // wait before retrying
@@ -374,7 +374,7 @@ pub async fn release_stock_from_order(
 
     if released_flag {
         tx.rollback().await?;
-        return Ok(()); // already released
+        return Ok(()); // already released//expired
     }
 
     if qty > reserved_qty {
@@ -428,7 +428,7 @@ pub async fn release_stock_from_order(
         ..Default::default()
     };
 
-    for event in &["inventory.released", "order.cancelled"] {
+    for event in &["inventory.released"] { // , "order.cancelled"
         if let Err(e) = redis_pub.publish(event, &release_event).await {
             eprintln!("Redis publish error (released): {}", e);
              // wait before retrying
@@ -529,10 +529,10 @@ pub async fn finalize_order_after_payment(
         ..Default::default()
     };
 
-    for event in &["inventory.finalized", "order.shipped"] {
+    for event in &["inventory.finalized"] { // , "order.shipped"
         if let Err(e) = redis_pub.publish(event, &finalised_event).await {
             eprintln!("Redis publish error (finalized): {}", e);
-             // wait before retrying
+             // wait beforge retrying
             tokio::time::sleep(std::time::Duration::from_secs(5)).await;
             continue;
         }

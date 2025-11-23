@@ -13,11 +13,6 @@ pub struct ProductDeletedEvent {
     pub deleted: bool,
 }
 
-// #[derive(Deserialize)]
-// pub struct UpdateQuantity {
-//     product_id: Uuid,
-//     quantity_change: i32,
-// }
 
 pub async fn get_inventory(
     repo: web::Data<InventoryRepo>,
@@ -96,11 +91,11 @@ pub async fn update_stock(
             };
 
             // Publish to Redis channels
-            if let Err(e) = redis_pub.publish(&event, "inventory.updated").await {
+            if let Err(e) = redis_pub.publish("inventory.updated", &event).await {
                 eprintln!("Redis publish error (updated): {}", e);
             }
             if low_stock {
-                if let Err(e) = redis_pub.publish(&event, "inventory.lowstock").await {
+                if let Err(e) = redis_pub.publish("inventory.lowstock", &event).await {
                     eprintln!("Redis publish error (lowstock): {}", e);
                 }
             }
@@ -146,14 +141,8 @@ pub async fn delete_product(
                 deleted: true
             };
 
-            redis_pub.publish::<ProductDeletedEvent>(&event, "inventory.deleted").await.unwrap();
+            redis_pub.publish::<ProductDeletedEvent>("inventory.deleted", &event).await.unwrap();
 
-            // Invalidate cache
-            // let mut conn = redis_client.get_multiplexed_async_connection().await.unwrap();
-            // let cache_key = format!("inventory:supplier:{}", supplier_id);
-            // let _: () = conn.del(cache_key).await.unwrap();
-
-            // Invalidate cache
             if let Ok(mut conn) = redis_client.get_multiplexed_async_connection().await {
                 let cache_key = format!("inventory:supplier:{}", supplier_id);
                 let _: Result<(), _> = conn.del(cache_key).await;
