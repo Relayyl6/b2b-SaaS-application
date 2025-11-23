@@ -13,8 +13,9 @@ pub struct Order {
     pub items: serde_json::Value,
     pub qty: Option<i32>,
     pub status: OrderStatus,
+    pub updated_at: Option<DateTime<Utc>>,
     pub expires_at: DateTime<Utc>,
-    pub timestamp: Option<i64>,
+    pub order_timestamp: DateTime<Utc>,
 }
 
 // items is basically the name of whatever you ordered
@@ -35,7 +36,7 @@ pub struct UpdateOrderStatus {
     pub user_id: Option<Uuid>,
     pub new_status: Option<OrderStatus>,
     pub expires_at: Option<DateTime<Utc>>,
-    pub timestamp: Option<i64>,
+    pub order_timestamp: Option<DateTime<Utc>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::Type, PartialEq, Eq)]
@@ -66,7 +67,7 @@ pub struct OrderEvent {
     pub order_id: Option<Uuid>,
     pub quantity: Option<i32>,
     pub reservation_id: Option<Uuid>,
-    pub timestamp: Option<i64>,
+    pub order_timestamp: DateTime<Utc>,
     pub expires_at: DateTime<Utc>,
     pub user_id: Option<Uuid>,
     // pub status: OrderStatus,

@@ -66,6 +66,7 @@ async fn main() -> std::io::Result<()> {
             .service(routes::create_order)
             .service(routes::get_order)
             .service(routes::update_status)
+            .service(routes::delete_order)
     })
     .bind(format!("0.0.0.0:{}", port))?
     .run()

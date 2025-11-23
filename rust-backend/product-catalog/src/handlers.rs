@@ -160,7 +160,7 @@ pub async fn delete_product(
                 let _ : Result<(), _> = conn.del(cache_key).await;
             }
 
-            HttpResponse::Ok().body("Deleted")
+            HttpResponse::Ok().body("Product deleted successfully")
         }
         Ok(_) => HttpResponse::NotFound().body("Not found"),
         Err(e) => {
