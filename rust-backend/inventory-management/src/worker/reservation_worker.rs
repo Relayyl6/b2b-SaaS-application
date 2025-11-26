@@ -2,10 +2,12 @@ use chrono::Utc;
 use sqlx::PgPool;
 use tokio::time::{interval, Duration};
 use serde_json::json;
+use crate::redis_pub::RedisPublisher;
+use actix_web::web::Data;
 
-pub async fn start_reservation_expiration_worker(pool: PgPool, redis_pub: RedisPublisher) {
+pub async fn start_reservation_expiration_worker(pool: PgPool, redis_pub: Data<RedisPublisher>) {
     tokio::spawn(async move {
-        let mut interval_timer = interval(Duration::from_secs(30));
+        let mut interval_timer = interval(Duration::from_secs(2 * 24 * 60 * 60));
 
         loop {
             interval_timer.tick().await;
@@ -27,7 +29,6 @@ async fn clean_expired_reservations(
             SELECT reservation_id, product_id, order_id, qty, user_id
             FROM reservations
             WHERE expires_at < NOW() AND released = false
-            RETURNING *
         "#
     )
     .fetch_all(pool)
@@ -41,21 +42,21 @@ async fn clean_expired_reservations(
                 SET reserved = reserved - $1
                 WHERE product_id = $2
             "#,
+            res.qty,
+            res.product_id
         )
-        .bind(res.qty)
-        .bind(res.product_id)
         .execute(pool)
         .await?;
 
-        // Mark reservation expired
+        // Mark reservation as expired
         sqlx::query!(
             r#"
                 UPDATE reservations
                 SET released = true
                 WHERE reservation_id = $1
             "#, // released = true basically means status = "expired"
+            res.reservation_id
         )
-        .bind(res.reservation_id)
         .execute(pool)
         .await?;
 
@@ -69,7 +70,9 @@ async fn clean_expired_reservations(
             "timestamp": Utc::now().timestamp_millis(),
         });
 
-        redis_pub.publish("inventory.reservation_expired", &event).await?;
+        if let Err(e) = redis_pub.publish("inventory.reservation_expired", &event).await {
+            eprintln!("Redis publish error: {:?}", e)
+        };
     }
 
     Ok(())

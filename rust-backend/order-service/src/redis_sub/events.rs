@@ -25,7 +25,7 @@ pub async fn update_order_failed_event(
             "id": event.order_id,
             "product_id": event.product_id,
             "user_id": event.user_id,
-            "new_status": "failed".to_string(),
+            "new_status": "Failed".to_string(),
             "order_timestamp": event.order_timestamp,
         }))
         .send()
@@ -58,7 +58,7 @@ pub async fn update_order_confirmed_event(_pool: &PgPool, event: OrderEvent) -> 
             "id": event.order_id,
             "product_id": event.product_id,
             "user_id": event.user_id,
-            "new_status": "confirmed".to_string(),
+            "new_status": "Confirmed".to_string(),
             "order_timestamp": event.order_timestamp,
         }))
         .send()
@@ -91,7 +91,7 @@ pub async fn update_order_cancelled_event(_pool: &PgPool, event: OrderEvent) -> 
             "id": event.order_id,
             "product_id": event.product_id,
             "user_id": event.user_id,
-            "new_status": "cancelled".to_string(),
+            "new_status": "Cancelled".to_string(),
             "order_timestamp": event.order_timestamp,
         }))
         .send()
@@ -124,7 +124,7 @@ pub async fn update_order_shipped_event(_pool: &PgPool, event: OrderEvent) -> Re
             "id": event.order_id,
             "product_id": event.product_id,
             "user_id": event.user_id,
-            "new_status": "shipped".to_string(),
+            "new_status": "Shipped".to_string(),
             "order_timestamp": event.order_timestamp,
         }))
         .send()
@@ -157,7 +157,7 @@ pub async fn update_order_delivered_event(_pool: &PgPool, event: OrderEvent) -> 
             "id": event.order_id,
             "product_id": event.product_id,
             "user_id": event.user_id,
-            "new_status": "delivered".to_string(),
+            "new_status": "Delivered".to_string(),
             "order_timestamp": event.order_timestamp,
         }))
         .send()

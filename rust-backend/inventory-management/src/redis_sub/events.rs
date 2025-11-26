@@ -5,8 +5,12 @@ use std::env;
 use serde::{Serialize, Deserialize};
 use crate::redis_pub::RedisPublisher;
 use tokio;
+use chrono::{DateTime, Duration, Utc};
+use actix_web::web;
+use crate::models::UpdateStockRequest;
+use crate::redis_sub::InventoryRepo;
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, Default)]
 pub struct ProductEvent {
     pub event_type: String,
     pub product_id: Uuid,
@@ -23,15 +27,18 @@ pub struct ProductEvent {
     pub order_id: Option<Uuid>,
     pub quantity: Option<i32>,
     pub reservation_id: Option<Uuid>,
-    pub timestamp: Option<i64>,
-    pub expires_at: Option<i64>,
+    pub order_timestamp: Option<DateTime<Utc>>,
+    pub expires_at: Option<DateTime<Utc>>,
     pub user_id: Option<Uuid>
     // pub status: OrderStatus,
 }
 
 // #[derive(Debug, Clone, Serialize, Deserialize, sqlx::Type, PartialEq, Eq)]
 // #[sqlx(type_name = "order_status", rename_all = "lowercase")]
-pub async fn create_product_from_event(_pool: &PgPool, event: ProductEvent) -> Result<(), Box<dyn std::error::Error>> {
+pub async fn create_product_from_event(
+    _pool: &PgPool,
+    event: ProductEvent
+) -> Result<(), Box<dyn std::error::Error>> {
 
     let client = Client::new();
     let service_url = env::var("INVENTORY_SERVICE_URL").unwrap_or_else(|_| "http://localhost:3002".into());
@@ -62,7 +69,10 @@ pub async fn create_product_from_event(_pool: &PgPool, event: ProductEvent) -> R
     Ok(())
 }
 
-pub async fn update_product_from_event(_pool: &PgPool, event: ProductEvent) -> Result<(), Box<dyn std::error::Error>> {
+pub async fn update_product_from_event(
+    _pool: &PgPool,
+    event: ProductEvent
+) -> Result<(), Box<dyn std::error::Error>> {
     let client = Client::new();
     let service_url = env::var("INVENTORY_SERVICE_URL").unwrap_or_else(|_| "http://localhost:3002".into());
     let url = format!("{}/inventory/{}/update", service_url, event.supplier_id);
@@ -95,7 +105,10 @@ pub async fn update_product_from_event(_pool: &PgPool, event: ProductEvent) -> R
     Ok(())
 }
 
-pub async fn delete_product_from_event(_pool: &PgPool, event: ProductEvent) -> Result<(), Box<dyn std::error::Error>> {
+pub async fn delete_product_from_event(
+    _pool: &PgPool,
+    event: ProductEvent
+) -> Result<(), Box<dyn std::error::Error>> {
     let client = Client::new();
     let service_url = env::var("INVENTORY_SERVICE_URL").unwrap_or_else(|_| "http://localhost:3002".into());
     let url = format!("{}/inventory/{}/{}", service_url, event.supplier_id, event.product_id);
@@ -113,6 +126,7 @@ pub async fn delete_product_from_event(_pool: &PgPool, event: ProductEvent) -> R
 
 pub async fn reserve_stock_from_order(
     pool: &PgPool,
+    redis_pub: web::Data<RedisPublisher>,
     event: ProductEvent
 ) -> Result<(), Box<dyn std::error::Error>> {
 
@@ -160,12 +174,12 @@ pub async fn reserve_stock_from_order(
         // Publish cancellation event
         let cancel_event = ProductEvent {
             event_type: "inventory.expired".into(), // it's meant to be "order.failed", but my order service is listening and i wanted it to hear something different, maybe it'll have other uses subsequently
-            product_id: Some(r.product_id),
+            product_id: r.product_id,
             order_id: Some(r.order_id),
             quantity: Some(r.qty),
             user_id: Some(r.user_id),
             reservation_id: Some(r.reservation_id),
-            timestamp: Some(Utc::now().timestamp_millis()),
+            order_timestamp: Some(Utc::now()),
             ..Default::default()
         };
 
@@ -184,7 +198,7 @@ pub async fn reserve_stock_from_order(
         );
     }
 
-    let product_id = event.product_id.ok_or("Missing product_id")?;
+    let product_id = event.product_id;
     let order_id = event.order_id.ok_or("Missing order_id")?;
     let qty_requested = event.quantity.ok_or("Missing quantity")?;
     let user_id = event.user_id.ok_or("Missing user_id")?;
@@ -197,29 +211,30 @@ pub async fn reserve_stock_from_order(
     // Atomically check & reserve stock
     let mut tx = pool.begin().await?;
 
+    
+    // let existing: Option<(Uuid, i32)> = //
+
     // ensure reservation for this order doesn't already exist (idempotency)
-    let existing: Option<(Uuid, i32)> = sqlx::query_as!(
+    if let Ok(Some((reservation_id, qty))) = sqlx::query_as::<_, (Uuid, i32)>(
         r#"
-            SELECT reservation_id::uuid AS \"reservation_id!: Uuid\", qty 
+            SELECT reservation_id, qty
             FROM reservations
             WHERE order_id = $1
         "#
     )
     .bind(order_id)
     .fetch_optional(&mut *tx)
-    .await?;
-
-    if let Some((reservation_id, qty)) = existing {
+    .await {
         tx.commit().await?;
         let success_event = ProductEvent {
             event_type: "inventory.reserved".into(),
-            product_id: Some(product_id),
+            product_id: product_id,
             order_id: Some(order_id),
             quantity: Some(qty),
             user_id: Some(user_id),
             expires_at: Some(expires_at),
             reservation_id: Some(reservation_id),
-            timestamp: Some(Utc::now().timestamp_millis()),
+            order_timestamp: Some(Utc::now()),
             ..Default::default()
         };
 
@@ -256,11 +271,11 @@ pub async fn reserve_stock_from_order(
         // Publish REJECTED
         let reject_event = ProductEvent {
             event_type: "inventory.rejected".into(),
-            product_id: Some(product_id),
+            product_id: product_id,
             order_id: Some(order_id),
             quantity: Some(qty_requested),
             user_id: Some(user_id),
-            timestamp: Some(Utc::now().timestamp_millis()),
+            order_timestamp: Some(Utc::now()),
             ..Default::default()
         };
 
@@ -278,15 +293,15 @@ pub async fn reserve_stock_from_order(
     }
 
     // Reserve stock
-    sqlx::query(
+    sqlx::query!(
         r#"
             UPDATE inventory
             SET reserved = reserved + $1
             WHERE product_id = $2
-        "#
+        "#,
+        qty_requested,
+        product_id
     )
-    .bind(qty_requested)
-    .bind(product_id)
     .execute(&mut *tx)
     .await?;
 
@@ -298,14 +313,14 @@ pub async fn reserve_stock_from_order(
         r#"
             INSERT INTO reservations (reservation_id, order_id, product_id, qty, user_id, expires_at, created_at, released)
             VALUES ($1, $2, $3, $4, $5, $6, now(), false)
-        "#
+        "#,
+        reservation_id,
+        order_id,
+        product_id,
+        qty_requested,
+        user_id,
+        expires_at
     )
-    .bind(reservation_id)
-    .bind(order_id)
-    .bind(product_id)
-    .bind(qty_requested)
-    .bind(user_id)
-    .bind(expires_at)
     .execute(&mut *tx)
     .await?;
 
@@ -314,13 +329,13 @@ pub async fn reserve_stock_from_order(
     // Publish success
     let success_event = ProductEvent {
         event_type: "inventory.reserved".into(),
-        product_id: Some(product_id),
+        product_id: product_id,
         order_id: Some(order_id),
         quantity: Some(qty_requested),
         expires_at: Some(expires_at),
         user_id: Some(user_id),
         reservation_id: Some(reservation_id),
-        timestamp: Some(Utc::now().timestamp_millis()),
+        order_timestamp: Some(Utc::now()),
         ..Default::default()
     };
 
@@ -341,11 +356,12 @@ pub async fn reserve_stock_from_order(
 
 pub async fn release_stock_from_order(
     pool: &PgPool,
+    redis_pub: web::Data<RedisPublisher>,
     event: ProductEvent,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let product_id = event.product_id.ok_or_else(|| "Missing product_id".into())?;
-    let order_id = event.order_id.ok_or_else(|| "Missing order_id".into())?;
-    let qty = event.quantity.ok_or_else(|| "Missing quantity".into())?;
+    let product_id = event.product_id;
+    let order_id = event.order_id.unwrap_or(Uuid::new_v4());
+    let qty = event.quantity.unwrap_or(0);
 
     let mut tx = pool.begin().await?;
 
@@ -355,9 +371,9 @@ pub async fn release_stock_from_order(
             SELECT reservation_id, qty, released, user_id
             FROM reservations
             WHERE order_id = $1 FOR UPDATE
-        "#
+        "#,
+        order_id
     )
-    .bind(order_id)
     .fetch_optional(&mut *tx)
     .await?;
 
@@ -367,10 +383,11 @@ pub async fn release_stock_from_order(
         return Ok(());
     }
 
-    let reservation_id: Uuid = res_row.unwrap().reservation_id;
-    let reserved_qty: i32 = res_row.unwrap().qty;
-    let released_flag: bool = res_row.unwrap().released;
-    let user_id: Uuid = res_row.unwrap().user_id;
+    let reservation_id: Uuid = res_row.as_ref().unwrap().reservation_id;
+    let reserved_qty: i32 = res_row.as_ref().unwrap().qty;
+    let released_flag: bool = res_row.as_ref().unwrap().released;
+    let user_id: Uuid = res_row.as_ref().unwrap().user_id;
+    let expires_at = Utc::now() + Duration::seconds(2 * 24 * 60 * 60);
 
     if released_flag {
         tx.rollback().await?;
@@ -389,10 +406,10 @@ pub async fn release_stock_from_order(
             SET reserved = reserved - $1
             WHERE product_id = $2
             AND reserved >= $1
-        "#
+        "#,
+        qty,
+        product_id
     )
-    .bind(qty)
-    .bind(product_id)
     .execute(&mut *tx)
     .await?;
 
@@ -407,9 +424,9 @@ pub async fn release_stock_from_order(
             UPDATE reservations
             SET released = true
             WHERE reservation_id = $1
-        "#
+        "#,
+        reservation_id
     )
-    .bind(reservation_id)
     .execute(&mut *tx)
     .await?;
 
@@ -418,13 +435,13 @@ pub async fn release_stock_from_order(
     // publish event AFTER commit
     let release_event = ProductEvent {
         event_type: "inventory.released".into(),
-        product_id: Some(product_id),
+        product_id: product_id,
         order_id: Some(order_id),
         quantity: Some(qty),
         user_id: Some(user_id),
         expires_at: Some(expires_at),
         reservation_id: Some(reservation_id),
-        timestamp: Some(Utc::now().timestamp_millis()),
+        order_timestamp: Some(Utc::now()),
         ..Default::default()
     };
 
@@ -440,103 +457,92 @@ pub async fn release_stock_from_order(
     Ok(())
 }
 
-
 pub async fn finalize_order_after_payment(
     pool: &PgPool,
+    redis_pub: web::Data<RedisPublisher>,
+    repo: web::Data<InventoryRepo>,
+    supplier_id: Uuid,
     event: ProductEvent,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let product_id = event.product_id.ok_or_else(|| "Missing product_id".into())?;
-    let order_id = event.order_id.ok_or_else(|| "Missing order_id".into())?;
-    let qty = event.quantity.ok_or_else(|| "Missing quantity".into())?;
+
+    let order_id = event.order_id.ok_or("missing order_id")?;
+    let qty = event.quantity.unwrap_or(0);
+    let product_id = event.product_id;
 
     let mut tx = pool.begin().await?;
 
-    // Option A: use reservations table
+    // Fetch reservation
     let res_row = sqlx::query!(
         r#"
-            SELECT reservation_id, qty, released
-            FROM reservations
-            WHERE order_id = $1 FOR UPDATE
-        "#
+        SELECT reservation_id, qty, released, user_id
+        FROM reservations
+        WHERE order_id = $1
+        FOR UPDATE
+        "#,
+        order_id
     )
-    .bind(order_id)
     .fetch_optional(&mut *tx)
     .await?;
 
-    if res_row.is_none() {
+    let row = match res_row {
+        Some(r) => r,
+        None => {
+            tx.rollback().await?;
+            return Err("No reservation found for order".into());
+        }
+    };
+
+    if row.released {
         tx.rollback().await?;
-        return Err("No reservation found for order".into());
+        return Err("Reservation already released (expired)".into());
     }
 
-    let reservation_id: Uuid = res_row.unwrap().reservation_id;
-    let reserved_qty: i32 = res_row.unwrap().qty;
-    let released_flag: bool = res_row.unwrap().released;
-
-    if released_flag {
-        tx.rollback().await?;
-        return Err("Reservation already released".into());
-    }
-
-    if qty > reserved_qty {
+    if qty > row.qty {
         tx.rollback().await?;
         return Err("Payment quantity exceeds reserved".into());
     }
 
-    // Atomically decrement both reserved and quantity; ensure reserved >= qty
-    let res = sqlx::query!(
-        r#"
-            UPDATE inventory
-            SET reserved = reserved - $1, quantity = quantity - $1
-            WHERE product_id = $2
-            AND reserved >= $1
-            AND quantity >= $1
-        "#
-    )
-    .bind(qty)
-    .bind(product_id)
-    .execute(&mut *tx)
-    .await?;
+    let reservation_id = row.reservation_id;
+    let user_id = row.user_id;
 
-    if res.rows_affected() == 0 {
-        tx.rollback().await?;
-        return Err("failed to finalize: insufficient numbers".into());
-    }
-
-    // mark reservation consumed
+    // Now mark reservation consumed
     sqlx::query!(
         r#"
             UPDATE reservations
-            SET released = true
+                SET released = TRUE
             WHERE reservation_id = $1
-        "#
+        "#,
+        reservation_id
     )
-    .bind(reservation_id)
     .execute(&mut *tx)
     .await?;
 
     tx.commit().await?;
 
-    // publish event
+    let update_req = UpdateStockRequest {
+        quantity_change: Some(-(qty)), // reduce stock
+        ..Default::default()
+    };
+
+    repo.update_stock(supplier_id, &update_req).await?;
+
+    let expires_at = Utc::now() + Duration::seconds(2 * 24 * 60 * 60);
+
     let finalised_event = ProductEvent {
         event_type: "inventory.finalized".into(),
-        product_id: Some(product_id),
+        product_id,
         order_id: Some(order_id),
         quantity: Some(qty),
         user_id: Some(user_id),
         expires_at: Some(expires_at),
         reservation_id: Some(reservation_id),
-        timestamp: Some(Utc::now().timestamp_millis()),
+        order_timestamp: Some(Utc::now()),
         ..Default::default()
     };
 
-    for event in &["inventory.finalized"] { // , "order.shipped"
-        if let Err(e) = redis_pub.publish(event, &finalised_event).await {
-            eprintln!("Redis publish error (finalized): {}", e);
-             // wait beforge retrying
-            tokio::time::sleep(std::time::Duration::from_secs(5)).await;
-            continue;
-        }
+    if let Err(e) = redis_pub.publish("inventory.finalized", &finalised_event).await {
+        eprintln!("Redis publish error: {}", e);
     }
-    
+
     Ok(())
 }

@@ -11,6 +11,8 @@ CREATE TABLE IF NOT EXISTS inventory (
     quantity INTEGER NOT NULL DEFAULT 0,
     low_stock_threshold INTEGER NOT NULL DEFAULT 10,
     unit TEXT NOT NULL,
+    available BOOLEAN NOT NULL DEFAULT TRUE,
+    reserved INTEGER NOT NULL DEFAULT 0,
     created_at TIMESTAMPTZ DEFAULT NOW(),
     updated_at TIMESTAMPTZ DEFAULT NOW(),
     UNIQUE(product_id, id)
@@ -22,17 +24,11 @@ CREATE INDEX IF NOT EXISTS idx_inventory_supplier ON inventory(supplier_id);
 ALTER TABLE inventory
 ALTER COLUMN price TYPE DOUBLE PRECISION USING price::double precision;
 
-ALTER TABLE inventory
-ADD COLUMN available BOOLEAN NOT NULL DEFAULT TRUE;
-
-ALTER TABLE inventory
-ADD COLUMN IF NOT EXISTS reserved INTEGER NOT NULL DEFAULT 0;
-
 CREATE TABLE IF NOT EXISTS reservations (
     reservation_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     order_id UUID NOT NULL UNIQUE,
     product_id UUID NOT NULL,
-    qty INT NOT NULL,
+    qty INTEGER NOT NULL,
     user_id UUID NOT NULL DEFAULT gen_random_uuid(),
     expires_at timestamptz,
     created_at timestamptz DEFAULT now(),

@@ -18,7 +18,6 @@ use events::{update_order_failed_event, update_order_confirmed_event, update_ord
 pub async fn listen_to_redis_events(pool: PgPool) -> Result<(), Box<dyn std::error::Error>> {
     let redis_url = env::var("REDIS_URL").map_err(|_| "REDIS_URL must be set in environment")?;
 
-
     // Main loop: wait for messages and handle each one.
     loop {
         println!("🔄 Connecting to Redis...");
