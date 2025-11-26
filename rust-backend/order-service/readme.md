@@ -1,4 +1,4 @@
-# 📦 Order Service — README
+# 📦 Order Service
 
 The **Order Service** manages customer orders within the distributed commerce platform.
 It handles creating orders, retrieving order information, updating order status, and deleting orders.
@@ -22,9 +22,14 @@ The service also publishes domain events to **Redis Streams** (RabbitMQ optional
 ```
 /src
   ├── models.rs
+  ├── db.rs
+  ├── redis_sub.rs
   ├── redis_pub.rs
-  ├── routes
-  │     └── orders.rs
+  ├── redis_sub
+  │     └── events.rs
+  ├── worker
+  │     └── order_expiration_worker.rs
+  │     └── mod.rs
   ├── main.rs
 ```
 
@@ -209,7 +214,7 @@ Deletes an order *only if it belongs to the user*.
 Order deleted successfully
 ```
 
-> NOTE: Pending orders should eventually auto-expire → a cron or background job should update them to `Failed` and publish `order.expired`.
+> NOTE: Pending orders should eventually auto-expire → a cron or background job should update them to `Failed` and publish `order.expired`. (this is handled by the order_expiration_worker. Cron job would be implemented in later services)
 
 ---
 
@@ -280,10 +285,11 @@ Logistics → update_status(Delivered)
 
 1. Customer places order → `order.created`
 2. Inventory reserves product → `order.confirmed`
-3. Payment succeeds → `order.confirmed`
-4. Supplier ships → logistics workflow
-5. Customer receives → `Delivered`
-6. Soft delete after X days
+3. Payment succeeds → `payment.success`
+4. Inventory confirms payment → `order.confirmed`
+5. Supplier ships → logistics workflow
+6. Customer receives → `Delivered`
+7. Soft delete after X days
 
 ---
 
