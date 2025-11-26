@@ -8,15 +8,25 @@ use redis::{Client, aio::Connection};
 use crate::redis_sub::events::ProductEvent;
 use serde_json;
 use tokio;
+use actix_web::web::Data;
+// mod db;
+
+use crate::redis_pub::RedisPublisher;
 
 mod events;
 use events::{create_product_from_event, update_product_from_event, delete_product_from_event, reserve_stock_from_order, release_stock_from_order, finalize_order_after_payment};
+use crate::db::InventoryRepo;
 
 use futures_util::StreamExt;
 
 #[allow(deprecated)]
-pub async fn listen_to_redis_events(pool: PgPool) -> Result<(), Box<dyn std::error::Error>> {
+pub async fn listen_to_redis_events(
+    pool: PgPool,
+    repo: Data<InventoryRepo>,
+    redis_pub: Data<RedisPublisher>
+) -> Result<(), Box<dyn std::error::Error>> {
     let redis_url = env::var("REDIS_URL").map_err(|_| "REDIS_URL must be set in environment")?;
+    // let repo = web::Data::new(db::InventoryRepo::new(&pool));
 
     // Main loop: wait for messages and handle each one.
     loop {
@@ -85,22 +95,22 @@ pub async fn listen_to_redis_events(pool: PgPool) -> Result<(), Box<dyn std::err
                     }
                 }
                 "order.created" => {
-                    if let Err(e) = reserve_stock_from_order($pool, event.clone()).await {
+                    if let Err(e) = reserve_stock_from_order(&pool, redis_pub.clone(), event.clone()).await {
                         println!("Error handling order.created: {:?}", e);
                     }
                 }
                 "order.cancelled" => {
-                    if let Err(e) = release_stock_from_order($pool, event.clone()).await {
+                    if let Err(e) = release_stock_from_order(&pool, redis_pub.clone(), event.clone()).await {
                         println!("Error handling order.cancelled: {:?}", e);
                     }
                 }
                 "order.failed" => {
-                    if let Err(e) = release_stock_from_order($pool, event.clone()).await {
+                    if let Err(e) = release_stock_from_order(&pool, redis_pub.clone(), event.clone()).await {
                         println!("Error handling order.cancelled: {:?}", e);
                     }
                 }
                 "payment.success" => {
-                    if let Err(e) = finalize_order_after_payment($pool, event.clone()).await {
+                    if let Err(e) = finalize_order_after_payment(&pool, redis_pub.clone(), repo.clone(), event.supplier_id, event.clone()).await {
                         println!("Error handling payment.success: {:?}", e);
                     }
                 }

@@ -16,10 +16,10 @@ pub struct Inventory {
     pub low_stock_threshold: i32,
     pub unit: String,
     pub available: bool,
-    pub updated_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Default)]
 pub struct UpdateStockRequest {
     pub product_id: Uuid,
     pub name: Option<String>,
