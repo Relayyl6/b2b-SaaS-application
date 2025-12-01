@@ -40,7 +40,7 @@ async fn main() -> std::io::Result<()> {
     let repo = web::Data::new(db::InventoryRepo::new(&pool));
 
     // let redis_client = web::Data::new(Client::open(redis_url.clone()));
-    
+
     let redis_client = web::Data::new(
         redis_url
             .as_ref()
@@ -69,9 +69,6 @@ async fn main() -> std::io::Result<()> {
     };
 
     reservation_worker::start_reservation_expiration_worker(pool.clone(), redis_pub.clone()).await;
-
-    // let redis_client = redis::Client::open(redis_url).expect("Failed to create Redis client");
-    // let _redis_conn = redis_client.get_async_connection().await.expect("Redis connection failed");
 
     // spawn Redis listener in background
     let pool_clone = pool.clone();

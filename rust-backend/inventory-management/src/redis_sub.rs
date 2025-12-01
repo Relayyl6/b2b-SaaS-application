@@ -110,7 +110,7 @@ pub async fn listen_to_redis_events(
                     }
                 }
                 "payment.success" => {
-                    if let Err(e) = finalize_order_after_payment(&pool, redis_pub.clone(), repo.clone(), event.supplier_id, event.clone()).await {
+                    if let Err(se) = finalize_order_after_payment(&pool, redis_pub.clone(), repo.clone(), event.supplier_id, event.clone()).await {
                         println!("Error handling payment.success: {:?}", e);
                     }
                 }
