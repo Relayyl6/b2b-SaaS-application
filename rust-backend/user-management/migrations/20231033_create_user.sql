@@ -11,7 +11,7 @@ CREATE TABLE IF NOT EXISTS users (
     is_active BOOLEAN NOT NULL DEFAULT TRUE,
     created_at TIMESTAMPTZ DEFAULT NOW(),
     updated_at TIMESTAMPTZ DEFAULT NOW(),
-    UNIQUE(id)
+    UNIQUE(id, email)
 );
 
 CREATE INDEX IF NOT EXISTS idx_user ON users(id);

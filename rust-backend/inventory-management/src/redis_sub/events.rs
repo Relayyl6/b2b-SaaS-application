@@ -521,6 +521,7 @@ pub async fn finalize_order_after_payment(
 
     let update_req = UpdateStockRequest {
         quantity_change: Some(-(qty)), // reduce stock
+        reserved: Some(-(qty)), // reduce reserved stock level by same amount
         ..Default::default()
     };
 

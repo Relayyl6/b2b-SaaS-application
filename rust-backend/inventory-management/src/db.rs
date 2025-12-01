@@ -43,6 +43,13 @@ impl InventoryRepo {
                     END,
                     quantity
                 ),
+                reserved = COALESCE(
+                    CASE
+                        WHEN $12 IS NOT NULL THEN reserved + $8
+                        ELSE reserved
+                    END,
+                    reserved
+                ),
                 available = COALESCE($7, available),
                 low_stock_threshold = COALESCE($9, low_stock_threshold),
                 updated_at = NOW()
@@ -61,6 +68,7 @@ impl InventoryRepo {
         .bind(req.low_stock_threshold)
         .bind(supplier_id)
         .bind(req.product_id)
+        .bind(req.reserved)
         .fetch_one(&self.pool)
         .await
     }
