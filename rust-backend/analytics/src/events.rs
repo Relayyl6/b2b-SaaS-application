@@ -6,15 +6,13 @@ use crate::models::Event
 
 // impl Event {
 //     pub fn new(
-//         event_type: impl Into<String>,
-//         data: serde_json::Value,
-//         id: Option<Uuid>
+//         event: &Event
 //     ) -> Self {
 //         Event {
-//             event_type: event_type.into(),
-//             event_timestamp: Utc::now(),
-//             data,
-//             id: Some(id),
+//             event_type: event.event_type.into(),
+//             event_timestamp: event.timestamp,
+//             data: event,
+//             id: event.id,
 //         }
 //     }
 }
