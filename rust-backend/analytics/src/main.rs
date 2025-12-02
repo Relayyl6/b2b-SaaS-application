@@ -1,37 +1,62 @@
 mod events;
-mod publisher;
-mod analytics_worker;
 mod dashboard;
+mod worker;
+mod handler;
+mod publisher;
 
+use crate::worker::consumer as consumer
+use tokio:spawn;
 use tracing_subscriber::FmtSubscriber;
-use tokio::task;
+use tokio;
+use sqlx::postgres::PgPoolOptions;
+use crate::handler::AnalyticsRepo;
 
-// Your analytics service might consume events like:
+// The analytics service might consume events like:
 //          InventoryViewed
 //          ProductClicked
 //          OrderInitiated
 //          OrderCompleted
 //          PaymentProcessed
 
-#[tokio::main]
-async fn main() -> anyhow::Result<()> {
+#[actix_web::main]
+async fn main() -> std::io::Result<()> {
     // tracing
     let subscriber = FmtSubscriber::builder().with_env_filter("info").finish();
     tracing::subscriber::set_global_default(subscriber)?;
 
+    let port = env::var("SERVICE_PORT").unwrap_or_else(|_| "3002".into());
+
+    let pool = PgPoolOptions::new()
+        .max_connections(5)
+        .connect(&db_url)
+        .await
+        .expect("postgres");
+    if let Err(e) = sqlx::migrate!("./migrations").run(&pool).await {
+        eprintln!("❌ Migration failed: {:?}", e);
+        std::process::exit(1);
+    }
+
+    let repo = web::Data::new(AnalyticsRepo::new(&pool));
+
     // choose role: worker, publisher sample, dashboard. For demo run worker + dashboard.
-    let worker_task = task::spawn(async {
-        if let Err(e) = analytics_worker::run_worker().await {
+    let _ = spawn(async {
+        if let Err(e) = consumer::run_worker(&pool).await {
             tracing::error!("Worker error: {:?}", e);
         }
     });
 
-    let dashboard_task = task::spawn(async {
-        if let Err(e) = dashboard::run_dashboard().await {
-            tracing::error!("Dashboard error: {:?}", e);
-        }
-    });
+    println!("Analytics Service running on htts://localshost: port")
 
-    tokio::try_join!(worker_task, dashboard_task)?;
+    HttpServer::new(move || {
+        App::new()
+            .app_data(pool.clone())
+            .app_data(repo.clone())
+            .app_data(redis_client.clone())
+            .route("/analytics", web::get().to(analytics_handler::analytics_handler))
+    })
+    .bind(format!("0.0.0.0:{}", port))?
+    .run()
+    .await
+
     Ok(())
 }
