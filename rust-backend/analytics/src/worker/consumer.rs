@@ -70,7 +70,7 @@ impl Consumer {
         channel.queue_bind(
             "analytics_queue",
             exchange_name,
-            "#",
+            "#", // this makes it behave like fanout exchange where we wont have bothered putting anything here, i.e. ""
             QueueBindOptions::default(),
             FieldTable::default(),
         ).await?;
