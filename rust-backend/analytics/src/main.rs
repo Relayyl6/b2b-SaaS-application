@@ -24,7 +24,7 @@ async fn main() -> std::io::Result<()> {
     let subscriber = FmtSubscriber::builder().with_env_filter("info").finish();
     tracing::subscriber::set_global_default(subscriber)?;
 
-    let port = env::var("SERVICE_PORT").unwrap_or_else(|_| "3002".into());
+    let port = env::var("SERVICE_PORT").unwrap_or_else(|_| "3007".into());
 
     let pool = PgPoolOptions::new()
         .max_connections(5)
