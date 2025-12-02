@@ -139,7 +139,7 @@ impl AnalyticsRepo {
         // allowed filter columns: union of allowed_group_by plus some known columns
         let mut allowed_filters = allowed_cols.to_vec().to_vec(); // allowed group_by
         // add usual JSONB-derived columns we might want to filter in some metrics
-        allowed_filters.extend_from_slice(&["product_id","signup_source","country","payment_method","channel","payment_method", "supplier_id"]);
+        allowed_filters.extend_from_slice(&["product_id","signup_source","country","payment_method","channel", "supplier_id"]);
 
         for (k, v) in filters.iter() {
             // sanitize: only allow letters, digits, underscore in column names
