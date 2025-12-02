@@ -8,7 +8,7 @@ use dotenvy::dotenv;
 use std::env;
 use std::sync::Arc;
 use uuid::Uuid;
-use redis::{AsyncCommands, Client, aio::Connection};
+use redis::{AsyncCommands, Client, aio::Connection as Conn};
 
 pub struct Consumer {
     pub pool: PgPool
@@ -206,7 +206,7 @@ async fn insert_event(
 async fn update_redis(
     &self,
     event: &Value,
-    redis_conn: Connection
+    redis_conn: Conn
 ) -> redis::RedisResult<()> {
         match event.get("event_type").and_then(|v| v.as_str()) {
             Some("product.viewed") => {
