@@ -1,4 +1,4 @@
-use lapin::{options::*,
+uuse lapin::{options::*,
     types::FieldTable, BasicProperties, Connection, ConnectionProperties, BasicProperties};
 use serde_json::json;
 use tracing::{info, error};
@@ -16,7 +16,7 @@ pub async fn publish_example_event(ev: Event) -> anyhow::Result<()> {
     let conn = Connection::connect(&amqp_addr, ConnectionProperties::default().with_default_executor(8)).await?;
     let channel = conn.create_channel().await?;
     // Use a topic exchange so services/consumers can select
-    let exchange_name = "events_topic";
+    let exchange_name = "analytics_events_topic";
     channel.exchange_declare(
         exchange_name,
         lapin::ExchangeKind::Topic,
