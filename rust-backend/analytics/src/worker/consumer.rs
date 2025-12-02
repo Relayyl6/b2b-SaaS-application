@@ -206,7 +206,7 @@ async fn update_redis(
     &self,
     event: &Value
 ) -> redis::RedisResult<()> {
-        let mut conn = self.redis_client.get_async_connection().await?;
+        let mut conn = redis::Client.get_async_connection().await?;
         match event.get("event_type").and_then(|v| v.as_str()) {
             Some("product.viewed") => {
                 if let Some(product_id) = event.get("product_id").and_then(|v| v.as_str()) {
