@@ -17,17 +17,12 @@ pub struct Consumer {
 impl Consumer {
     pub async fn run(
         &self,
-        pool: &PgPool
+        pool: &PgPool,
+        redis_conn: &Conn
     ) -> Result<()> {
         dotenv().ok();
         let amqp_addr = env::var("AMQP_ADDR").unwrap_or_else(|_| "amqp://guest:guest@127.0.0.1:5672/%2f".into());
-        let pg_url = env::var("DATABASE_URL").unwrap_or_else(|_| "postgres://postgres:password@127.0.0.1:5432/analytics".into());
-        let redis_url = env::var("REDIS_URL").unwrap_or_else(|_| "redis://127.0.0.1/".into());
-
-        // Redis client
-        let client = redis::Client::open(redis_url)?;
-        let mut redis_conn = client.get_async_connection().await?;
-
+        
         // RabbitMQ
         let rabbit_conn = Connection::connect(&amqp_addr, ConnectionProperties::default()).await?;
         let channel = rabbit_conn.create_channel().await?;
