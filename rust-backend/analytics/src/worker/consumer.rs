@@ -23,9 +23,6 @@ impl Consumer {
         let amqp_addr = env::var("AMQP_ADDR").unwrap_or_else(|_| "amqp://guest:guest@127.0.0.1:5672/%2f".into());
         let pg_url = env::var("DATABASE_URL").unwrap_or_else(|_| "postgres://postgres:password@127.0.0.1:5432/analytics".into());
         let redis_url = env::var("REDIS_URL").unwrap_or_else(|_| "redis://127.0.0.1/".into());
-
-        // DB pool
-        let pool = PgPool::connect(&pg_url).await?;
         // Redis client
         let client = redis::Client::open(redis_url)?;
         let mut redis_conn = client.get_async_connection().await?;
