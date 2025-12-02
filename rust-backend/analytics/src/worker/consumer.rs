@@ -11,8 +11,7 @@ use redis::AsyncCommands;
 use uuid::Uuid;
 
 pub struct Consumer {
-    pub db_pool: PgPool,
-    pub redis_client: Arc<redis::Client>
+    pub pool: PgPool
 }
 
 impl Consumer {
