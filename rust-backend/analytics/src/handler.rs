@@ -72,7 +72,7 @@ impl AnalyticsRepo {
         // validate metric
         let metric = match metric {
             Some(m) => m,
-            None => return HttpResponse::BadRequest().json(json!({"error":"metric is required"})),
+            None => return HttpResponse::BadRequest().json(serde_json::json!({"error":"metric is required"})),
         };
 
         let map = metric_table_map();
