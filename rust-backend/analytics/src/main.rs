@@ -40,7 +40,7 @@ async fn main() -> std::io::Result<()> {
 
     // choose role: worker, publisher sample, dashboard. For demo run worker + dashboard.
     let _ = spawn(async {
-        if let Err(e) = consumer::run_worker(&pool).await {
+        if let Err(e) = consumer::run(&pool).await {
             tracing::error!("Worker error: {:?}", e);
         }
     });
