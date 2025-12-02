@@ -25,6 +25,12 @@ async fn main() -> std::io::Result<()> {
     tracing::subscriber::set_global_default(subscriber)?;
 
     let port = env::var("SERVICE_PORT").unwrap_or_else(|_| "3007".into());
+    let db_url = env::var("DATABASE_URL").unwrap_or_else(|_| "postgres://postgres:password@127.0.0.1:5432/analytics".into());
+    let redis_url = env::var("REDIS_URL").unwrap_or_else(|_| "redis://127.0.0.1/".into());
+
+        // Redis client
+    let client = redis::Client::open(redis_url)?;
+    let mut redis_conn = client.get_async_connection().await?;
 
     let pool = PgPoolOptions::new()
         .max_connections(5)
@@ -40,7 +46,7 @@ async fn main() -> std::io::Result<()> {
 
     // choose role: worker, publisher sample, dashboard. For demo run worker + dashboard.
     let _ = spawn(async {
-        if let Err(e) = consumer::run(&pool).await {
+        if let Err(e) = consumer::run(&pool, &redis_conn).await {
             tracing::error!("Worker error: {:?}", e);
         }
     });
