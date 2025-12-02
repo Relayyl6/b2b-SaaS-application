@@ -8,6 +8,7 @@ use dotenvy::dotenv;
 use std::env;
 use std::sync::Arc;
 use redis::AsyncCommands;
+use uuid::Uuid;
 
 pub struct Consumer {
     pub db_pool: PgPool,
@@ -179,13 +180,13 @@ async fn insert_event(
     };
 
     let id = if id_key == "random" {
-        uuid::Uuid::new_v4().to_string()
+        Uuid::new_v4().to_string()
     } else {
         event.data
             .get(id_key)
             .and_then(|v| v.as_str())
             .map(|s| s.to_string())
-            .unwrap_or_else(|| uuid::Uuid::new_v4().to_string())
+            .unwrap_or_else(|| Uuid::new_v4().to_string())
     };
 
     sqlx::query_as::<_, Event>(
