@@ -120,7 +120,7 @@ impl Consumer {
 
             // process event 
             let db_res = insert_event(&pool, &event).await;
-            let redis_res = update_redis(&event.data).await;
+            let redis_res = update_redis(&event.data, redis_conn).await;
 
             if db_res.is_ok() && redis_res.is_ok() {
                 // everything ok → normal ack
@@ -204,26 +204,26 @@ async fn insert_event(
 
 async fn update_redis(
     &self,
-    event: &Value
+    event: &Value,
+    redis_conn: Connection
 ) -> redis::RedisResult<()> {
-        let mut conn = redis::Client.get_async_connection().await?;
         match event.get("event_type").and_then(|v| v.as_str()) {
             Some("product.viewed") => {
                 if let Some(product_id) = event.get("product_id").and_then(|v| v.as_str()) {
                     let key = format!("product_view_count:{}", product_id);
-                    let _ = conn.incr(key, 1).await?;
+                    let _ = redis_conn.incr(key, 1).await?;
                 }
             }
             Some("order.created") => {
                 if let Some(order_id) = event.get("order_id").and_then(|w| w.as_str()) {
                     let key = format!("orders_placed_count:{}", order_id);
-                    let _ = conn.incr(key, 1).await?;
+                    let _ = redis_conn.incr(key, 1).await?;
                 }
             }
             Some("user.created") => {
                 if let Some(user_id) = event.get("user_id").and_then(|w| w.as_str()) {
                     let key = format!("users_created_count:{}", user_id);
-                    let _ = conn.incr(key, 1).await?;
+                    let _ = redis_conn.incr(key, 1).await?;
                 }
             }
             _ => {}
