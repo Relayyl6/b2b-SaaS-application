@@ -101,7 +101,7 @@ impl AnalyticsRepo {
         let allowed_cols = allowed_group_by(metric.as_str());
         let group_by_cols: Vec<_> = group_by
             .as_deref()
-            .unwrap_or("day")
+            .unwrap_or("")
             .split(',')
             .map(|s| s.trim().to_string())
             .filter(|c| !c.is_empty())
