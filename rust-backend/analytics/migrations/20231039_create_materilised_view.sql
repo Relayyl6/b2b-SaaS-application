@@ -5,38 +5,38 @@
 -- =====================================
 -- SECTION: MATERIALIZED VIEWS
 -- =====================================
-CREATE MATERIALIZED VIEW analytics.top_products_7d
-WITH (timescaledb.continuous, timescaledb.refresh_lag = '5 minutes')
-AS
-SELECT
-    time_bucket('1 day', event_timestamp) AS bucket,
-    (data->>'product_id')::bigint AS product_id,
+-- CREATE MATERIALIZED VIEW analytics.top_products_7d
+-- WITH (timescaledb.continuous, timescaledb.refresh_lag = '5 minutes')
+-- AS
+-- SELECT
+--     time_bucket('1 day', event_timestamp) AS bucket,
+--     (data->>'product_id')::bigint AS product_id,
 
-    -- added to cart
-    sum((data->>'qty')::bigint)
-        FILTER (WHERE event_type = 'order.created') AS carted_qty,
+--     -- added to cart
+--     sum((data->>'quantity')::bigint)
+--         FILTER (WHERE event_type = 'order.created') AS carted_qty,
     
-    -- inventory events
-    sum((data->>'qty')::bigint)
-        FILTER (WHERE event_type = 'inventory.updated') AS restocked_qty,
+--     -- inventory events
+--     sum((data->>'quantity')::bigint)
+--         FILTER (WHERE event_type = 'inventory.updated') AS restocked_qty,
 
-    -- logistics
-    count(*)
-        FILTER (WHERE event_type = 'order.shipped') AS shipped_orders,
+--     -- logistics
+--     count(*)
+--         FILTER (WHERE event_type = 'order.shipped') AS shipped_orders,
 
-    -- products
-    count(*) 
-        FILTER (WHERE event_type = 'product.viewed') AS views,
-    count(*) 
-        FILTER (WHERE event_type = 'product.created') AS created_products,
+--     -- products
+--     count(*) 
+--         FILTER (WHERE event_type = 'product.viewed') AS views,
+--     count(*) 
+--         FILTER (WHERE event_type = 'product.created') AS created_products,
 
-    -- payments
-    sum((data->>'amount')::numeric)
-        FILTER (WHERE event_type = 'payment.completed')    AS payment_volume
+--     -- payments
+--     sum((data->>'amount')::numeric)
+--         FILTER (WHERE event_type = 'payment.completed')    AS payment_volume
 
-FROM analytics.events
-WHERE event_type IN ('order.created', 'product.viewed')
-GROUP BY bucket, product_id;
+-- FROM analytics.events
+-- WHERE event_type IN ('order.created', 'product.viewed')
+-- GROUP BY bucket, product_id;
 
 
 
@@ -179,16 +179,19 @@ CREATE INDEX IF NOT EXISTS idx_events_order_id
     ON analytics.events ((data->>'order_id'))
     WHERE event_type LIKE 'order.%';
 
--- Orders daily rollup (counts, qty, revenue)
+-- Orders daily rollup (counts, quantity, revenue)
 CREATE MATERIALIZED VIEW IF NOT EXISTS analytics.orders_daily
 WITH (timescaledb.continuous, timescaledb.refresh_lag = '5 minutes')
 AS
 SELECT
     time_bucket('1 day', event_timestamp) AS day,
     (data->>'order_id')::text AS order_id_sample, -- for debugging, not primary
-    count(*) FILTER (WHERE event_type = 'order.created') AS orders_created,
-    sum( (data->>'qty')::bigint ) FILTER (WHERE event_type = 'order.created') AS items_ordered,
-    sum( (data->>'price')::numeric ) FILTER (WHERE event_type = 'order.created') AS order_value_created,
+    count(*)
+        FILTER (WHERE event_type = 'order.created') AS orders_created,
+    sum( (data->>'quantity')::bigint )
+        FILTER (WHERE event_type = 'order.created') AS items_ordered,
+    sum( (data->>'price')::numeric )
+        FILTER (WHERE event_type = 'order.created') AS order_value_created,
 
     count(*) FILTER (WHERE event_type = 'order.shipped') AS orders_shipped,
     sum( (data->>'price')::numeric ) FILTER (WHERE event_type = 'order.shipped') AS revenue_shipped
@@ -209,7 +212,8 @@ WITH (timescaledb.continuous)
 AS
 SELECT
     time_bucket('1 day', event_timestamp) AS day,
-    sum((data->>'price')::numeric) FILTER (WHERE event_type = 'order.shipped') AS revenue
+    sum((data->>'price')::numeric)
+        FILTER (WHERE event_type = 'order.shipped') AS revenue
 FROM analytics.events
 WHERE event_type = 'order.shipped'
 GROUP BY day;
@@ -264,7 +268,7 @@ SELECT
     (data->>'product_id')::bigint AS product_id,
 
     -- sales
-    sum((data->>'qty')::bigint) FILTER (WHERE event_type = 'order.created') AS sold_qty,
+    sum((data->>'quantity')::bigint) FILTER (WHERE event_type = 'order.created') AS sold_qty,
     sum((data->>'price')::numeric) FILTER (WHERE event_type = 'order.created') AS gross_sales,
 
     -- shipped -> revenue realized
@@ -274,7 +278,7 @@ SELECT
     count(*) FILTER (WHERE event_type = 'product.viewed') AS views,
 
     -- inventory
-    sum((data->>'qty')::bigint) FILTER (WHERE event_type = 'inventory.updated') AS inventory_delta
+    sum((data->>'quantity')::bigint) FILTER (WHERE event_type = 'inventory.updated') AS inventory_delta
 
 FROM analytics.events
 WHERE event_type IN ('order.created', 'order.shipped', 'product.viewed', 'inventory.updated')
@@ -297,10 +301,10 @@ AS
 SELECT
     time_bucket('1 day', event_timestamp) AS day,
     (data->>'product_id')::bigint AS product_id,
-    sum((data->>'qty')::bigint)
+    sum((data->>'quantity')::bigint)
         FILTER (WHERE event_type = 'inventory.updated'
         AND (data->>'change_type') = 'restock') AS restocked_qty,
-    sum((data->>'qty')::bigint)
+    sum((data->>'quantity')::bigint)
         FILTER (WHERE event_type = 'inventory.updated'
         AND (data->>'change_type') = 'deduct') AS deducted_qty
 FROM analytics.events

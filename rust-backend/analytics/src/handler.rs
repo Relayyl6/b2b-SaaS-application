@@ -1,9 +1,11 @@
 use actix_web::{web, HttpResponse, Responder};
 use sqlx::{postgres::PgPool, QueryBuilder};
 use std::collections::HashMap;
-use sqlx::PgPool;
-use crate::models::{AnalyticsQuery, AnalyticsBody};
+use crate::models::AnalyticsRequestBody;
 use crate::events::{metric_table_map, allowed_group_by, parse_window_to_interval};
+use serde_json::{json, Value};
+use sqlx::Row;
+use sqlx::Postgres;
 
 #[derive(Clone)]
 pub struct AnalyticsRepo {
@@ -14,16 +16,13 @@ impl AnalyticsRepo {
     pub fn new(
         pool: &PgPool
     ) -> Self {
-        Self {
-            pool: pool.clone()
-        }
+        Self { pool: pool.clone() }
     }
-
     /// The single configurable Actix handler
     pub async fn analytics_handler(
         pool: web::Data<PgPool>,
-        q: web::Query<HashMap<String, String>>,    // we accept arbitrary query params
-        body: Option<web::Json<AnalyticsBody>>,    // optional JSON body
+        q: web::Query<HashMap<String, String>>,    // we accept arbitrary query params instead of the AnalyticsRequestQuery for fields we dont know of
+        body: Option<web::Json<AnalyticsRequestBody>>,    // optional JSON body
     ) -> impl Responder {
         // Merge params: body (if present) overrides query params
         // We'll construct a small config from either source.
@@ -39,44 +38,44 @@ impl AnalyticsRepo {
         let reserved = ["metric","window","group_by","aggregate_field","limit","order_by"];
         for (k,v) in q.iter() {
             if !reserved.contains(&k.as_str()) {
-                filters.insert(k.clone(), v.clone());
+                filters.insert((&k).to_string(), (&v).to_string());
             }
         }
 
-        if let Some(b) = body {
+        if let Some(mut b) = body {
             if metric.is_none() {
-                metric = b.metric.clone();
+                metric = b.metric.take();
             }
             if window.is_none() {
-                window = b.window.clone();
+                window = b.window.take();
             }
             if group_by.is_none() {
-                group_by = b.group_by.clone();
+                group_by = b.group_by.take();
             }
             if aggregate_field.is_none() {
-                aggregate_field = b.aggregate_field.clone();
+                aggregate_field = b.aggregate_field.take();
             }
             if limit.is_none() {
                 limit = b.limit;
             }
             if order_by.is_none() {
-                order_by = b.order_by.clone();
+                order_by = b.order_by.take();
             }
             if let Some(body_filters) = &b.filters {
-                for (
-                    k,v
-                ) in body_filters { filters.insert(k.clone(), v.clone()); }
+                for ( k, v ) in body_filters {
+                    filters.insert(k.to_string(), v.to_string());
+                }
             }
         }
 
         // validate metric
         let metric = match metric {
             Some(m) => m,
-            None => return HttpResponse::BadRequest().json(serde_json::json!({"error":"metric is required"})),
+            None => return HttpResponse::BadRequest().json(json!({"error":"metric is required"})),
         };
 
         let map = metric_table_map();
-        let table = match map.get(metric.as_str()) {
+        let table = match map.await.get(metric.as_str()) {
             Some(t) => *t,
             None => return HttpResponse::BadRequest().json(json!({"error":"unknown metric"})),
         };
@@ -101,7 +100,7 @@ impl AnalyticsRepo {
         let allowed_cols = allowed_group_by(metric.as_str());
         let group_by_cols: Vec<_> = group_by
             .as_deref()
-            .unwrap_or("day")
+            .unwrap_or("")
             .split(',')
             .map(|s| s.trim().to_string())
             .filter(|c| !c.is_empty())
@@ -129,7 +128,7 @@ impl AnalyticsRepo {
         };
 
         // construct WHERE clause for filters (column = $n) -- only allow simple equality filters on whitelisted columns
-        let mut qb = QueryBuilder::new("");
+        let _qb = QueryBuilder::<Postgres>::new("");
         let mut where_clauses: Vec<String> = Vec::new();
         let mut bind_values: Vec<String> = Vec::new(); // placeholder for debug (we bind properly later)
 
@@ -158,8 +157,8 @@ impl AnalyticsRepo {
             // Use numbered placeholders and QueryBuilder to bind.
             where_clauses.push(format!("( ({} = ${}) OR ((data->>'{}') = ${}) )", key, bind_values.len()*2+1, key, bind_values.len()*2+2));
             // we will push the value twice; QueryBuilder will bind them in order.
-            bind_values.push(v.clone());
-            bind_values.push(v.clone());
+            bind_values.push((&v).to_string());
+            bind_values.push((&v).to_string());
         }
 
         // final WHERE clause string
@@ -185,6 +184,14 @@ impl AnalyticsRepo {
                 Some("day_asc") => "ORDER BY day ASC".to_string(),
                 _ => "ORDER BY value DESC".to_string(),
             };
+            let mut agg_safe = "";
+            if !aggregate_field.is_empty() {
+                agg_safe = if aggregate_field.chars().all(|c| c.is_alphanumeric() || c == '_') {
+                    &aggregate_field
+                } else {
+                    return HttpResponse::BadRequest().json(json!({"error":"invalid aggregate_field"}));
+                };
+            }
 
             format!(
                 "
@@ -195,7 +202,7 @@ impl AnalyticsRepo {
                     {order} {limit}
                  ",
                  group_cols = group_cols_csv,
-                 agg = sqlx::postgres::PgArguments::default() /* placeholder - shown for clarity*/, // we'll substitute agg as literal (safe if from default mapping)
+                 agg = agg_safe,
                  table = table,
                  where = where_clause,
                  order = order_clause,
@@ -209,17 +216,6 @@ impl AnalyticsRepo {
             };
             format!("SELECT * FROM {} {} ORDER BY day DESC {}", table, where_clause, limit_clause)
         };
-
-        // NOTE: above we had an ugly placeholder for agg; since agg field is a column name provided by us or default,
-        // ensure it's safe (alphanumeric + underscore) before inserting directly.
-        let agg_safe = if aggregate_field.chars().all(|c| c.is_alphanumeric() || c == '_') {
-            aggregate_field.clone()
-        } else {
-            return HttpResponse::BadRequest().json(json!({"error":"invalid aggregate_field"}));
-        };
-
-        // patch the inner_select to put the actual aggregate column name
-        let inner_select = inner_select.replace("PgArguments::default()", &agg_safe);
 
         // Wrap inner_select to return JSON rows easily using Postgres json_agg:
         let final_sql = format!("SELECT COALESCE(json_agg(t), '[]'::json) AS data FROM ( {} ) t", inner_select);
@@ -237,7 +233,10 @@ impl AnalyticsRepo {
             Ok(row) => {
                 // get JSON from "data" column
                 let v: Value = row.try_get("data").unwrap_or(Value::Null);
-                HttpResponse::Ok().json(json!({"sql": final_sql, "result": v}))
+                HttpResponse::Ok().json(json!({
+                    "sql": final_sql,
+                    "result": v
+                }))
             }
             Err(e) => {
                 HttpResponse::InternalServerError().json(json!({"error": format!("{}", e), "sql": final_sql}))

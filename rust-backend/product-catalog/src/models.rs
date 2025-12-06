@@ -54,9 +54,7 @@ pub struct BulkCreateRequest {
     pub products: Vec<CreateProductRequest>,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct ProductEvent {
-
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
 pub struct ProductEvent {
     pub event_type: String,
     pub product_id: Uuid,
@@ -73,7 +71,8 @@ pub struct ProductEvent {
     pub order_id: Option<Uuid>,
     pub quantity: Option<i32>,
     pub reservation_id: Option<Uuid>,
-    pub timestamp: Option<i64>,
-    pub expires_at: Option<i64>,
+    pub timestamp: Option<DateTime<Utc>>,
+    pub expires_at: Option<DateTime<Utc>>,
+    pub user_id: Option<Uuid>
     // pub status: OrderStatus,
 }

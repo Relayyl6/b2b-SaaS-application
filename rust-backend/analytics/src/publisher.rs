@@ -1,19 +1,30 @@
-uuse lapin::{options::*,
-    types::FieldTable, BasicProperties, Connection, ConnectionProperties, BasicProperties};
-use serde_json::json;
-use tracing::{info, error};
+use lapin::{options::*, types::FieldTable, Connection, ConnectionProperties, BasicProperties};
+use tracing::info;
 use crate::models::Event;
 use dotenvy::dotenv;
 use std::env;
-use redis::AsyncCommands;
-use std::sync::Arc;
+use tracing::error;
+// use redis::{RedisError};
+// use lapin::Error;
+// use std::io::Error;
+use thiserror::Error;
 
+#[derive(Error, Debug)]
+pub enum PublishError {
+    #[error("json serialisation error: {0}")]
+    Json(#[from] serde_json::Error),
 
-pub async fn publish_example_event(ev: Event) -> anyhow::Result<()> {
+    #[error("rabbitMQ error: {0}")]
+    Rabbit(#[from] lapin::Error),
+}
+
+pub async fn publish_example_event(
+    ev: Event
+) -> Result<(), PublishError> {
     dotenv().ok();
     let amqp_addr = env::var("AMQP_ADDR").unwrap_or_else(|_| "amqp://guest:guest@127.0.0.1:5672/%2f".into());
 
-    let conn = Connection::connect(&amqp_addr, ConnectionProperties::default().with_default_executor(8)).await?;
+    let conn = Connection::connect(&amqp_addr, ConnectionProperties::default()).await?;
     let channel = conn.create_channel().await?;
     // Use a topic exchange so services/consumers can select
     let exchange_name = "analytics_events_topic";

@@ -29,10 +29,6 @@ pub async fn create_product(
                 low_stock_threshold: None,
                 unit: Some(product.unit.clone()),
                 quantity_change: None,
-                // available: None,
-                // order_id: None,
-                // reservation_id: None,
-                // timestamp: None,
                 ..Default::default()
             };
 
@@ -54,7 +50,28 @@ pub async fn get_products_for_supplier(
 ) -> impl Responder {
     let supplier_id = path.into_inner();
     match repo.get_by_supplier(supplier_id).await {
-        Ok(items) => HttpResponse::Ok().json(items),
+        Ok(items) => {
+            // publish event
+            let event = ProductEvent {
+                event_type: "product.viewed".to_string(),
+                product_id: product.product_id,
+                supplier_id: product.supplier_id,
+                price: Some(product.price),
+                category: Some(product.category.clone()),
+                name: Some(product.name.clone()),
+                description: product.description.clone(),
+                quantity: Some(product.quantity),
+                low_stock_threshold: None,
+                unit: Some(product.unit.clone()),
+                quantity_change: None,
+                ..Default::default()
+            };
+
+            if let Err(e) = redis_pub.publish("product.viewed", &event).await {
+                eprintln!("Redis publish error (product.viewed): {:?}", e);
+            }
+            HttpResponse::Ok().json(items),
+        }
         Err(e) => {
             eprintln!("Get products DB error: {:?}", e);
             HttpResponse::InternalServerError().body("DB error")

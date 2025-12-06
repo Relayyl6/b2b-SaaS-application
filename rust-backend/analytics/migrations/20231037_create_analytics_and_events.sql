@@ -19,7 +19,7 @@ SET search_path = raw, analytics, derived, public;
 CREATE TABLE IF NOT EXISTS analytics.events (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     event_type TEXT NOT NULL,
-    event_timestamp TIMESTAMP WITH TIME ZONE NOT NULL,
+    event_timestamp TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOWW(),
     data JSONB NOT NULL
 );
 
