@@ -6,7 +6,7 @@ CREATE TABLE IF NOT EXISTS inventory (
     product_id UUID DEFAULT gen_random_uuid(),
     name TEXT NOT NULL,
     price NUMERIC(12,2) NOT NULL DEFAULT 0.00,
-    description TEXT,
+    description JSONB,
     category TEXT NOT NULL,
     quantity INTEGER NOT NULL DEFAULT 0,
     low_stock_threshold INTEGER NOT NULL DEFAULT 10,

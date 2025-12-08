@@ -2,39 +2,13 @@ use sqlx::PgPool;
 use uuid::Uuid;
 use reqwest::Client;
 use std::env;
-use serde::{Serialize, Deserialize};
 use crate::redis_pub::RedisPublisher;
 use tokio;
-use chrono::{DateTime, Duration, Utc};
+use chrono::{Duration, Utc};
 use actix_web::web;
-use crate::models::UpdateStockRequest;
+use crate::models::{UpdateStockRequest, ProductEvent};
 use crate::redis_sub::InventoryRepo;
 
-#[derive(Clone, Debug, Serialize, Deserialize, Default)]
-pub struct ProductEvent {
-    pub event_type: String,
-    pub product_id: Uuid,
-    pub supplier_id: Uuid,
-    pub name: Option<String>,
-    pub description: Option<String>,
-    pub price: Option<f64>,
-    pub category: Option<String>,
-    pub low_stock_threshold: Option<i32>,
-    pub unit: Option<String>,
-    pub quantity_change: Option<i32>,
-    pub available: Option<bool>,
-    // Order-related
-    pub order_id: Option<Uuid>,
-    pub quantity: Option<i32>,
-    pub reservation_id: Option<Uuid>,
-    pub order_timestamp: Option<DateTime<Utc>>,
-    pub expires_at: Option<DateTime<Utc>>,
-    pub user_id: Option<Uuid>
-    // pub status: OrderStatus,
-}
-
-// #[derive(Debug, Clone, Serialize, Deserialize, sqlx::Type, PartialEq, Eq)]
-// #[sqlx(type_name = "order_status", rename_all = "lowercase")]
 pub async fn create_product_from_event(
     _pool: &PgPool,
     event: ProductEvent
@@ -51,7 +25,7 @@ pub async fn create_product_from_event(
             "supplier_id": event.supplier_id,
             "quantity": event.quantity.unwrap_or(0),
             "name": event.name.clone().unwrap_or("Unnamed product".to_string()),
-            "description": event.description.clone().unwrap_or("No description for this product".to_string()),
+            "description": event.description.clone().unwrap_or(serde_json::Value::String("No description for this product".to_string())),
             "price": event.price.unwrap_or(0.00),
             "category": event.category.clone().unwrap_or("Unspecified Category".to_string()),
             "low_stock_threshold": event.low_stock_threshold.unwrap_or(5),

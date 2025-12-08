@@ -67,11 +67,12 @@ Creates a new order and publishes an `order.created` event.
   "supplier_id": "UUID",
   "product_id": "UUID",
   "qty": 1,
-  "status": null, 
+  "status": null,
   "items": {
     "name": "string",
     "unit_price": 0,
     "quantity": 0,
+    "description": "string"
     "currency": "string",
     "category": "string",
     "sku": "string",

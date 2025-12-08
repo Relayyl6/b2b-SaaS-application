@@ -39,13 +39,16 @@ impl ProductRepo {
         .await
     }
 
-    pub async fn get_by_supplier(&self, supplier_id: Uuid) -> Result<Vec<Product>, sqlx::Error> {
+    pub async fn get_by_supplier(
+        &self,
+        supplier_id: Uuid
+    ) -> Result<Vec<Product>, sqlx::Error> {
         sqlx::query_as::<_, Product>(
             r#"
-            SELECT id, product_id, supplier_id, name, description, category, price, unit, quantity, available, created_at, updated_at
-            FROM products
-            WHERE supplier_id = $1
-            ORDER BY name
+                SELECT id, product_id, supplier_id, name, description, category, price, unit, quantity, available, created_at, updated_at
+                FROM products
+                WHERE supplier_id = $1
+                ORDER BY name
             "#
         )
         .bind(supplier_id)
@@ -53,7 +56,11 @@ impl ProductRepo {
         .await
     }
 
-    pub async fn get_one(&self, supplier_id: Uuid, product_id: Uuid) -> Result<Product, sqlx::Error> {
+    pub async fn get_one(
+        &self,
+        supplier_id: Uuid,
+        product_id: Uuid
+    ) -> Result<Product, sqlx::Error> {
         sqlx::query_as::<_, Product>(
             r#"
             SELECT id, supplier_id, product_id, name, description, category, price, unit, quantity, available, created_at, updated_at
