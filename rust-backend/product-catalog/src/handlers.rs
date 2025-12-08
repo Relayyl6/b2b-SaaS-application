@@ -46,31 +46,35 @@ pub async fn create_product(
 
 pub async fn get_products_for_supplier(
     repo: web::Data<ProductRepo>,
+    redis_pub: web::Data<RedisPublisher>
     path: web::Path<Uuid>,
 ) -> impl Responder {
     let supplier_id = path.into_inner();
     match repo.get_by_supplier(supplier_id).await {
         Ok(items) => {
             // publish event
-            let event = ProductEvent {
-                event_type: "product.viewed".to_string(),
-                product_id: product.product_id,
-                supplier_id: product.supplier_id,
-                price: Some(product.price),
-                category: Some(product.category.clone()),
-                name: Some(product.name.clone()),
-                description: product.description.clone(),
-                quantity: Some(product.quantity),
-                low_stock_threshold: None,
-                unit: Some(product.unit.clone()),
-                quantity_change: None,
-                ..Default::default()
-            };
+            for item in items {
+                println!("{}", item);
+                let event = ProductEvent {
+                    event_type: "product.viewed".to_string(),
+                    product_id: item.product_id,
+                    supplier_id: item.supplier_id,
+                    price: Some(item.price),
+                    category: Some(item.category.clone()),
+                    name: Some(item.name.clone()),
+                    description: item.description.clone(),
+                    quantity: Some(item.quantity),
+                    low_stock_threshold: None,
+                    unit: Some(item.unit.clone()),
+                    quantity_change: None,
+                    ..Default::default()
+                };
 
-            if let Err(e) = redis_pub.publish("product.viewed", &event).await {
-                eprintln!("Redis publish error (product.viewed): {:?}", e);
+                if let Err(e) = redis_pub.publish("product.viewed", &event).await {
+                    eprintln!("Redis publish error (product.viewed): {:?}", e);
+                }
             }
-            HttpResponse::Ok().json(items),
+            HttpResponse::Ok().json(items)
         }
         Err(e) => {
             eprintln!("Get products DB error: {:?}", e);
@@ -125,9 +129,6 @@ pub async fn update_product(
                 unit: Some(p.unit.clone()),
                 quantity_change: update_data.quantity_change,
                 available: Some(p.available),
-                // order_id: None,
-                // reservation_id: None,
-                // timestamp: None,
                 ..Default::default()
             };
 

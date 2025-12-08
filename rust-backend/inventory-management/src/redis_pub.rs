@@ -10,7 +10,9 @@ pub struct RedisPublisher {
 }
 
 impl RedisPublisher {
-    pub async fn new(redis_url: &str) -> Result<Self, RedisError> {
+    pub async fn new(
+        redis_url: &str
+    ) -> Result<Self, RedisError> {
         let client = Client::open(redis_url)?;
         Ok(Self {
             client,

@@ -6,7 +6,7 @@ CREATE TABLE products (
     product_id UUID NOT NULL UNIQUE DEFAULT gen_random_uuid(),
     supplier_id UUID NOT NULL,
     name TEXT NOT NULL,
-    description TEXT,
+    description JSONB,
     category TEXT NOT NULL,
     price NUMERIC(12,2) NOT NULL DEFAULT 0.00,
     unit TEXT NOT NULL,

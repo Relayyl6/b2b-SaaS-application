@@ -5,7 +5,7 @@ use sqlx::PgPool;
 
 use std::env;
 use redis::{Client, aio::Connection};
-use crate::redis_sub::events::ProductEvent;
+use crate::models::ProductEvent;
 use serde_json;
 use tokio;
 use actix_web::web::Data;
@@ -110,7 +110,7 @@ pub async fn listen_to_redis_events(
                     }
                 }
                 "payment.success" => {
-                    if let Err(se) = finalize_order_after_payment(&pool, redis_pub.clone(), repo.clone(), event.supplier_id, event.clone()).await {
+                    if let Err(e) = finalize_order_after_payment(&pool, redis_pub.clone(), repo.clone(), event.supplier_id, event.clone()).await {
                         println!("Error handling payment.success: {:?}", e);
                     }
                 }
