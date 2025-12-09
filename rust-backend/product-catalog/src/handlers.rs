@@ -8,6 +8,7 @@ use crate::redis_pub::RedisPublisher;
 use sqlx;
 use redis;
 use serde_json::json;
+use crate::rabbit_pub::publish_example_event;
 
 pub async fn create_product(
     repo: web::Data<ProductRepo>,
@@ -35,6 +36,9 @@ pub async fn create_product(
             if let Err(e) = redis_pub.publish("product.created", &event).await {
                 eprintln!("Redis publish error (product.created): {:?}", e);
             }
+            if let Err(e) = publish_example_event(&event).await {
+                eprintln!("Rabbit publish error (product.created): {:?}", e);
+            }
             HttpResponse::Created().json(product)
         }
         Err(e) => {
@@ -46,15 +50,15 @@ pub async fn create_product(
 
 pub async fn get_products_for_supplier(
     repo: web::Data<ProductRepo>,
-    redis_pub: web::Data<RedisPublisher>
+    redis_pub: web::Data<RedisPublisher>,
     path: web::Path<Uuid>,
 ) -> impl Responder {
     let supplier_id = path.into_inner();
     match repo.get_by_supplier(supplier_id).await {
         Ok(items) => {
             // publish event
-            for item in items {
-                println!("{}", item);
+            for item in &items {
+                println!("{:?}", item);
                 let event = ProductEvent {
                     event_type: "product.viewed".to_string(),
                     product_id: item.product_id,
@@ -74,7 +78,7 @@ pub async fn get_products_for_supplier(
                     eprintln!("Redis publish error (product.viewed): {:?}", e);
                 }
             }
-            HttpResponse::Ok().json(items)
+            HttpResponse::Ok().json(&items)
         }
         Err(e) => {
             eprintln!("Get products DB error: {:?}", e);

@@ -2,6 +2,7 @@ mod models;
 mod db;
 mod redis_pub;
 mod handlers;
+mod rabbit_pub;
 
 use dotenvy::dotenv;
 use std::env;

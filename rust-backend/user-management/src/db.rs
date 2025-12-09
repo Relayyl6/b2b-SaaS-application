@@ -14,7 +14,10 @@ impl UserRepo {
         Self { pool }
     }
 
-    pub async fn sign_up(&self, req: &SignUpRequest) -> Result<(Users, String), sqlx::Error> {
+    pub async fn sign_up(
+        &self,
+        req: &SignUpRequest
+    ) -> Result<(Users, String), sqlx::Error> {
         let role = req.role.clone().unwrap_or(UserRole::User);
         let email = &req.email;
         let full_name = &req.full_name;
@@ -106,7 +109,7 @@ impl UserRepo {
         sqlx::query_as::<_, Users>(
             r#"
             UPDATE users
-            SET 
+            SET
                 email = COALESCE($1, email),
                 full_name = COALESCE($2, full_name),
                 password = COALESCE($3, password),
