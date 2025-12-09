@@ -4,9 +4,6 @@ use crate::models::Event;
 use dotenvy::dotenv;
 use std::env;
 use tracing::error;
-// use redis::{RedisError};
-// use lapin::Error;
-// use std::io::Error;
 use thiserror::Error;
 
 #[derive(Error, Debug)]

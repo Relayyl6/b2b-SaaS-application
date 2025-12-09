@@ -50,25 +50,25 @@ impl RabbitConsumer {
         ).await?;
 
         // 1. Declare the DLQ
-            channel.queue_declare(
-                "analytics_dlq",
-                QueueDeclareOptions {
-                    durable: true,
-                    ..Default::default()
-                },
-                FieldTable::default(),
-            ).await?;
+        channel.queue_declare(
+            "analytics_dlq",
+            QueueDeclareOptions {
+                durable: true,
+                ..Default::default()
+            },
+            FieldTable::default(),
+        ).await?;
 
-            // 2. Declare MAIN queue with DLQ routing
-            let mut args = FieldTable::default();
-            args.insert(
-                "x-dead-letter-exchange".into(),
-                AMQPValue::LongString("".into()),
-            );
-            args.insert(
-                "x-dead-letter-routing-key".into(),
-                AMQPValue::LongString("analytics_dlq".into()),
-            );
+        // 2. Declare MAIN queue with DLQ routing
+        let mut args = FieldTable::default();
+        args.insert(
+            "x-dead-letter-exchange".into(),
+            AMQPValue::LongString("".into()),
+        );
+        args.insert(
+            "x-dead-letter-routing-key".into(),
+            AMQPValue::LongString("analytics_dlq".into()),
+        );
 
             // Create a queue for analytics consumers; durable so we don't lose messages
             channel.queue_declare(

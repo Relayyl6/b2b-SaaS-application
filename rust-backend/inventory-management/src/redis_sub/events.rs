@@ -13,7 +13,6 @@ pub async fn create_product_from_event(
     _pool: &PgPool,
     event: ProductEvent
 ) -> Result<(), Box<dyn std::error::Error>> {
-
     let client = Client::new();
     let service_url = env::var("INVENTORY_SERVICE_URL").unwrap_or_else(|_| "http://localhost:3002".into());
     let url = format!("{}/inventory", service_url);
@@ -33,7 +32,7 @@ pub async fn create_product_from_event(
         }))
         .send()
         .await?;
-    
+
     if resp.status().is_success() {
         println!("✅({}) Created product {:?} via API route", event.event_type, event.name);
     } else {
