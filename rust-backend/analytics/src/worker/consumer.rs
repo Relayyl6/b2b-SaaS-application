@@ -70,21 +70,21 @@ impl RabbitConsumer {
             AMQPValue::LongString("analytics_dlq".into()),
         );
 
-            // Create a queue for analytics consumers; durable so we don't lose messages
-            channel.queue_declare(
-                "analytics_queue",
-                QueueDeclareOptions {
-                    durable: true,
-                    ..Default::default()
-                },
-                args,
-            ).await?;
+        // Create a queue for analytics consumers; durable so we don't lose messages
+        channel.queue_declare(
+            "analytics_queue",
+            QueueDeclareOptions {
+                durable: true,
+                ..Default::default()
+            },
+            args,
+        ).await?;
 
         // Bind to topic exchange
         channel.queue_bind(
             "analytics_queue",
             exchange_name,
-            "#", // this makes it behave like fanout exchange where we wont have bothered putting anything here, i.e. ""
+            "#", // this makes it behave like fanout exchange where we wont have bothered putting anything here, i.e. "" in fanout
             QueueBindOptions::default(),
             FieldTable::default(),
         ).await?;
@@ -121,7 +121,7 @@ impl RabbitConsumer {
                     _ => None
                 })
                 .unwrap_or(3);
-        
+
             let analytics_event: Event = match serde_json::from_slice(&delivery.data) {
                 Ok(ev)  => match Event::new(ev) {
                     Ok(ev) => ev,
