@@ -111,7 +111,8 @@ impl RabbitConsumer {
             // Extract retries from headers
             let retries = delivery
                 .properties
-                .headers().as_ref()
+                .headers()
+                .as_ref()
                 .and_then(|h| h.inner().get("x-retries"))
                 .and_then(|v| match v {
                     AMQPValue::LongLongInt(i) => Some(*i as i64),
