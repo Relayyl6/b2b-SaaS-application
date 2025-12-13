@@ -65,7 +65,7 @@ pub async fn create_order(
                 expires_at: order.expires_at,
 
                 // Add order_timestamp for event ordering
-                order_timestamp: order.order_timestamp,
+                timestamp: order.order_timestamp,
 
                 ..Default::default()
             };
@@ -196,7 +196,7 @@ pub async fn update_status(
                         user_id: Some(order.user_id),
 
                         // Add order_timestamp for event ordering
-                        order_timestamp: order.order_timestamp,
+                        timestamp: order.order_timestamp,
                     };
 
 

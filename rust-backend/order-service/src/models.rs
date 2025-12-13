@@ -67,7 +67,7 @@ pub struct OrderEvent {
     pub order_id: Option<Uuid>,
     pub quantity: Option<i32>,
     pub reservation_id: Option<Uuid>,
-    pub order_timestamp: DateTime<Utc>,
+    pub timestamp: DateTime<Utc>,
     pub expires_at: DateTime<Utc>,
     pub user_id: Option<Uuid>,
     // pub status: OrderStatus,
