@@ -64,12 +64,12 @@ async fn main() -> std::io::Result<()> {
 
     HttpServer::new(move || {
         App::new()
-            .app_data(repo)
-            .app_data(redis_pub)
-            .app_data(redis_client)
+            .app_data(repo.clone())
+            .app_data(redis_pub.clone())
+            .app_data(redis_client.clone())
             .service(
                 web::scope("/protected")       // all /protected/* routes
-                    .wrap(middleware)  // middleware only applies here
+                    .wrap(middleware.clone())  // middleware only applies here
                     .route("/update/{id}", web::put().to(protected_handlers::update_user_handler))
                     .route("/delete/{id}", web::delete().to(protected_handlers::delete_user_handler))
             )

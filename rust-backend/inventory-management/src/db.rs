@@ -1,7 +1,7 @@
 // src/db.rs
 use sqlx::PgPool;
 use uuid::Uuid;
-use crate::models::{Inventory, UpdateStockRequest};
+use crate::models::{Inventory, UpdateStockRequest, CreateInventoryRequest};
 
 #[derive(Clone)]
 pub struct InventoryRepo {
@@ -75,7 +75,7 @@ impl InventoryRepo {
 
     pub async fn create_inventory_item(
         &self,
-        req: &crate::models::CreateInventoryRequest,
+        req: &CreateInventoryRequest,
     ) -> Result<Inventory, sqlx::Error> {
         sqlx::query_as::<_, Inventory>(
             r#"
