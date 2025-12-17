@@ -39,6 +39,7 @@ impl AnalyticsEvent {
 }
 
 
+<<<<<<< HEAD
 impl Event {
     pub fn new(
         event: AnalyticsEvent
@@ -57,6 +58,19 @@ impl Event {
             }
         )
     }
+=======
+// impl Event {
+//     pub fn new(
+//         event: &Event
+//     ) -> Self {
+//         Event {
+//             event_type: event.event_type.into(),
+//             event_timestamp: event.timestamp,
+//             data: event,
+//             id: event.id,
+//         }
+//     }
+>>>>>>> c420c33e89a7137dbccbb6b9b6d9ec10d29b6400
 }
 
 
