@@ -1,10 +1,8 @@
-version: "3.9"
-
 services:
   timescaledb:
-    image: timescale/timescaledb-ha:pg14-latest
+    image: timescale/timescaledb:latest-pg15
     container_name: timescaledb
-    restart: always
+    restart: unless-stopped
     ports:
       - "5432:5432"
     environment:
