@@ -14,6 +14,7 @@ use std::collections::HashMap;
 use std::env;
 use uuid::Uuid;
 
+/// Creates a product and emits best-effort integration events.
 pub async fn create_product(
     repo: web::Data<ProductRepo>,
     redis_pub: web::Data<RedisPublisher>,
@@ -51,6 +52,7 @@ pub async fn create_product(
     }
 }
 
+/// Returns all products for a supplier and emits view events.
 pub async fn get_products_for_supplier(
     repo: web::Data<ProductRepo>,
     redis_pub: web::Data<RedisPublisher>,
@@ -88,6 +90,7 @@ pub async fn get_products_for_supplier(
     }
 }
 
+/// Returns a single product by supplier and product id.
 pub async fn get_single_product(
     repo: web::Data<ProductRepo>,
     path: web::Path<(Uuid, Uuid)>,
@@ -103,6 +106,7 @@ pub async fn get_single_product(
     }
 }
 
+/// Updates a product and emits a product.updated event.
 pub async fn update_product(
     repo: web::Data<ProductRepo>,
     redis_pub: web::Data<RedisPublisher>,
@@ -185,6 +189,7 @@ pub async fn delete_product(
     }
 }
 
+/// Searches products by optional query parameters.
 pub async fn search_products(
     repo: web::Data<ProductRepo>,
     query: web::Query<HashMap<String, String>>,
@@ -229,6 +234,7 @@ pub async fn search_products(
     }
 }
 
+/// Creates products in bulk and emits product.created events.
 pub async fn bulk_create(
     repo: web::Data<ProductRepo>,
     redis_pub: web::Data<RedisPublisher>,
