@@ -1,7 +1,7 @@
 use redis::{AsyncCommands, Client, RedisError};
 use serde_json;
-use tokio::time::{sleep, Duration};
 use std::env;
+use tokio::time::{Duration, sleep};
 
 #[derive(Clone)]
 pub struct RedisPublisher {
@@ -18,19 +18,26 @@ impl RedisPublisher {
         })
     }
 
-    pub async fn publish<T: serde::Serialize>(&self, channel: &str, message: &T) -> Result<(), RedisError> {
+    pub async fn publish<T: serde::Serialize>(
+        &self,
+        channel: &str,
+        message: &T,
+    ) -> Result<(), RedisError> {
         if !self.enabled {
-            eprintln!("🟡 RedisPublisher disabled — skipping publish for channel '{}'", channel);
+            eprintln!(
+                "🟡 RedisPublisher disabled — skipping publish for channel '{}'",
+                channel
+            );
             return Ok(());
         }
 
-        let payload = serde_json::to_string(message)
-            .map_err(|e| redis::RedisError::from((
+        let payload = serde_json::to_string(message).map_err(|e| {
+            redis::RedisError::from((
                 redis::ErrorKind::TypeError,
                 "Serialization failed",
                 e.to_string(),
-            )))?;
-
+            ))
+        })?;
 
         let mut attempts = 0;
 
@@ -60,7 +67,8 @@ impl RedisPublisher {
 
     pub fn new_noop() -> Self {
         let redis_url = env::var("REDIS_URL").unwrap_or_else(|_| "redis://127.0.0.1/".to_string());
-        let client = Client::open(redis_url).unwrap_or_else(|_| Client::open("redis://127.0.0.1/").unwrap());
+        let client =
+            Client::open(redis_url).unwrap_or_else(|_| Client::open("redis://127.0.0.1/").unwrap());
         Self {
             client,
             enabled: false,
