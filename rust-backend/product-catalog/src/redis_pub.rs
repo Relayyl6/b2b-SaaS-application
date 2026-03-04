@@ -19,7 +19,6 @@ impl RedisPublisher {
         })
     }
 
-    /// Publishes a serialized message to Redis with retry behavior.
     pub async fn publish<T: serde::Serialize>(
         &self,
         channel: &str,

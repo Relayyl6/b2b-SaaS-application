@@ -3,12 +3,9 @@ use chrono::Utc;
 use uuid::Uuid;
 
 use crate::db::LogisticsRepo;
-use crate::models::{
-    CreateShipmentRequest, ListShipmentQuery, LogisticsEvent, UpdateShipmentStatusRequest,
-};
+use crate::models::{CreateShipmentRequest, LogisticsEvent, UpdateShipmentStatusRequest};
 use crate::publisher::RedisPublisher;
 
-/// Creates a shipment and publishes logistics.shipment_created.
 pub async fn create_shipment(
     repo: web::Data<LogisticsRepo>,
     redis_pub: web::Data<RedisPublisher>,
@@ -43,7 +40,6 @@ pub async fn create_shipment(
     }
 }
 
-/// Returns shipment details by id.
 pub async fn get_shipment(repo: web::Data<LogisticsRepo>, path: web::Path<Uuid>) -> impl Responder {
     match repo.get_shipment(path.into_inner()).await {
         Ok(shipment) => HttpResponse::Ok().json(shipment),
@@ -52,22 +48,16 @@ pub async fn get_shipment(repo: web::Data<LogisticsRepo>, path: web::Path<Uuid>)
     }
 }
 
-/// Returns supplier shipments using filter and pagination query fields.
 pub async fn list_supplier_shipments(
     repo: web::Data<LogisticsRepo>,
     path: web::Path<Uuid>,
-    query: web::Query<ListShipmentQuery>,
 ) -> impl Responder {
-    match repo
-        .list_supplier_shipments(path.into_inner(), &query.into_inner())
-        .await
-    {
+    match repo.list_supplier_shipments(path.into_inner()).await {
         Ok(shipments) => HttpResponse::Ok().json(shipments),
         Err(e) => HttpResponse::InternalServerError().body(format!("db error: {e}")),
     }
 }
 
-/// Updates shipment status and publishes logistics.shipment_updated.
 pub async fn update_status(
     repo: web::Data<LogisticsRepo>,
     redis_pub: web::Data<RedisPublisher>,
@@ -96,11 +86,6 @@ pub async fn update_status(
             }
 
             HttpResponse::Ok().json(shipment)
-        }
-        Err(sqlx::Error::Protocol(message))
-            if message.to_string().contains("invalid status transition") =>
-        {
-            HttpResponse::BadRequest().body(message.to_string())
         }
         Err(sqlx::Error::RowNotFound) => HttpResponse::NotFound().body("shipment not found"),
         Err(e) => {
