@@ -12,19 +12,6 @@ pub enum ShipmentStatus {
     Cancelled,
 }
 
-impl ShipmentStatus {
-    pub fn can_transition_to(&self, next: &ShipmentStatus) -> bool {
-        match (self, next) {
-            (ShipmentStatus::Pending, ShipmentStatus::Intransit)
-            | (ShipmentStatus::Pending, ShipmentStatus::Cancelled)
-            | (ShipmentStatus::Intransit, ShipmentStatus::Delivered)
-            | (ShipmentStatus::Intransit, ShipmentStatus::Cancelled) => true,
-            (a, b) if a == b => true,
-            _ => false,
-        }
-    }
-}
-
 #[derive(Debug, Serialize, Deserialize, FromRow)]
 pub struct Shipment {
     pub id: Uuid,
@@ -54,13 +41,6 @@ pub struct CreateShipmentRequest {
 pub struct UpdateShipmentStatusRequest {
     pub status: ShipmentStatus,
     pub notes: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct ListShipmentQuery {
-    pub status: Option<ShipmentStatus>,
-    pub limit: Option<i64>,
-    pub offset: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

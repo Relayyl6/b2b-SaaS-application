@@ -3,9 +3,7 @@ use chrono::Utc;
 use uuid::Uuid;
 
 use crate::db::LogisticsRepo;
-use crate::models::{
-    CreateShipmentRequest, ListShipmentQuery, LogisticsEvent, UpdateShipmentStatusRequest,
-};
+use crate::models::{CreateShipmentRequest, LogisticsEvent, UpdateShipmentStatusRequest};
 use crate::publisher::RedisPublisher;
 
 pub async fn create_shipment(
@@ -53,12 +51,8 @@ pub async fn get_shipment(repo: web::Data<LogisticsRepo>, path: web::Path<Uuid>)
 pub async fn list_supplier_shipments(
     repo: web::Data<LogisticsRepo>,
     path: web::Path<Uuid>,
-    query: web::Query<ListShipmentQuery>,
 ) -> impl Responder {
-    match repo
-        .list_supplier_shipments(path.into_inner(), &query.into_inner())
-        .await
-    {
+    match repo.list_supplier_shipments(path.into_inner()).await {
         Ok(shipments) => HttpResponse::Ok().json(shipments),
         Err(e) => HttpResponse::InternalServerError().body(format!("db error: {e}")),
     }
@@ -92,11 +86,6 @@ pub async fn update_status(
             }
 
             HttpResponse::Ok().json(shipment)
-        }
-        Err(sqlx::Error::Protocol(message))
-            if message.to_string().contains("invalid status transition") =>
-        {
-            HttpResponse::BadRequest().body(message.to_string())
         }
         Err(sqlx::Error::RowNotFound) => HttpResponse::NotFound().body("shipment not found"),
         Err(e) => {
