@@ -20,4 +20,5 @@ lapin = { version = "3.7.1", features = ["rustls"] }
 thiserror = "2.0.17"
 tracing = "0.1"
 tokio-rustls = "0.26.4"
+sha1 = "0.10"
 
