@@ -10,10 +10,12 @@ pub struct ProductRepo {
 }
 
 impl ProductRepo {
+    /// Creates a new instance with the provided dependencies.
     pub fn new(pool: PgPool) -> Self {
         Self { pool }
     }
 
+    /// Creates a product and emits best-effort integration events.
     pub async fn create_product(&self, req: &CreateProductRequest) -> Result<Product, sqlx::Error> {
         let available = req.available.unwrap_or(true);
         let quantity = req.quantity.unwrap_or(0);
@@ -55,6 +57,7 @@ impl ProductRepo {
         .await
     }
 
+    /// Returns a single product for a supplier/product pair.
     pub async fn get_one(
         &self,
         supplier_id: Uuid,
@@ -132,6 +135,7 @@ impl ProductRepo {
         Ok(result.rows_affected())
     }
 
+    /// Searches products by optional query parameters.
     pub async fn search_products(
         &self,
         category: Option<String>,

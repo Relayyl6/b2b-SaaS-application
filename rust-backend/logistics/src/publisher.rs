@@ -9,6 +9,7 @@ pub struct RedisPublisher {
 }
 
 impl RedisPublisher {
+    /// Creates a new instance with the provided dependencies.
     pub async fn new(redis_url: &str) -> Result<Self, RedisError> {
         let client = Client::open(redis_url)?;
         Ok(Self {
@@ -17,6 +18,7 @@ impl RedisPublisher {
         })
     }
 
+    /// Publishes a serialized message to Redis with retry behavior.
     pub async fn publish<T: serde::Serialize>(
         &self,
         channel: &str,
@@ -63,6 +65,7 @@ impl RedisPublisher {
         }
     }
 
+    /// Creates a disabled publisher that drops publish calls.
     pub fn new_noop() -> Self {
         let redis_url = env::var("REDIS_URL").unwrap_or_else(|_| "redis://127.0.0.1/".to_string());
         let client = Client::open(redis_url)
