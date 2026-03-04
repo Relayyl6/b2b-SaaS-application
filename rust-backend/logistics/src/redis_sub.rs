@@ -1,5 +1,4 @@
 use actix_web::web::Data;
-use chrono::Utc;
 use futures_util::StreamExt;
 use redis::{aio::Connection, Client};
 use std::env;
@@ -7,6 +6,7 @@ use std::env;
 use crate::db::LogisticsRepo;
 use crate::models::{CreateShipmentRequest, IncomingOrderEvent, LogisticsEvent, ShipmentStatus};
 use crate::publisher::RedisPublisher;
+use chrono::Utc;
 
 #[allow(deprecated)]
 pub async fn listen_to_redis_events(
@@ -38,7 +38,6 @@ pub async fn listen_to_redis_events(
         let mut stream = pubsub.on_message();
 
         while let Some(msg) = stream.next().await {
-            let channel = msg.get_channel_name().to_string();
             let payload: String = match msg.get_payload() {
                 Ok(v) => v,
                 Err(_) => continue,
@@ -52,13 +51,7 @@ pub async fn listen_to_redis_events(
                 }
             };
 
-            let route_key = if channel.is_empty() {
-                event.event_type.as_str()
-            } else {
-                channel.as_str()
-            };
-
-            match route_key {
+            match event.event_type.as_str() {
                 "inventory.reserved" => {
                     let Some(order_id) = event.order_id else {
                         continue;
@@ -67,43 +60,36 @@ pub async fn listen_to_redis_events(
                         continue;
                     };
 
-                    match repo.get_by_order_id(order_id).await {
-                        Ok(_) => continue,
-                        Err(sqlx::Error::RowNotFound) => {}
-                        Err(e) => {
-                            eprintln!(
-                                "Failed checking shipment existence for order {order_id}: {e:?}"
-                            );
-                            continue;
-                        }
-                    }
-
-                    let req = CreateShipmentRequest {
-                        order_id,
-                        user_id,
-                        supplier_id: event.supplier_id,
-                        product_id: event.product_id,
-                        notes: Some("Created from inventory reservation".to_string()),
-                    };
-
-                    if let Ok(shipment) = repo.create_shipment(&req).await {
-                        let outbound = LogisticsEvent {
-                            event_type: "logistics.shipment_created".to_string(),
-                            shipment_id: shipment.id,
-                            order_id: shipment.order_id,
-                            user_id: shipment.user_id,
-                            supplier_id: shipment.supplier_id,
-                            product_id: shipment.product_id,
-                            status: shipment.status,
-                            tracking_number: shipment.tracking_number,
-                            timestamp: Utc::now(),
+                    if repo.get_by_order_id(order_id).await.is_err() {
+                        let req = CreateShipmentRequest {
+                            order_id,
+                            user_id,
+                            supplier_id: event.supplier_id,
+                            product_id: event.product_id,
+                            notes: Some("Created from inventory reservation".to_string()),
                         };
 
-                        if let Err(e) = redis_pub
-                            .publish("logistics.shipment_created", &outbound)
-                            .await
-                        {
-                            eprintln!("Failed publishing logistics.shipment_created event: {e:?}");
+                        if let Ok(shipment) = repo.create_shipment(&req).await {
+                            let outbound = LogisticsEvent {
+                                event_type: "logistics.shipment_created".to_string(),
+                                shipment_id: shipment.id,
+                                order_id: shipment.order_id,
+                                user_id: shipment.user_id,
+                                supplier_id: shipment.supplier_id,
+                                product_id: shipment.product_id,
+                                status: shipment.status,
+                                tracking_number: shipment.tracking_number,
+                                timestamp: Utc::now(),
+                            };
+
+                            if let Err(e) = redis_pub
+                                .publish("logistics.shipment_created", &outbound)
+                                .await
+                            {
+                                eprintln!(
+                                    "Failed publishing logistics.shipment_created event: {e:?}"
+                                );
+                            }
                         }
                     }
                 }

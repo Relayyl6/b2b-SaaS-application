@@ -17,6 +17,3 @@ CREATE TABLE IF NOT EXISTS shipments (
 
 CREATE INDEX IF NOT EXISTS idx_shipments_supplier_id ON shipments(supplier_id);
 CREATE INDEX IF NOT EXISTS idx_shipments_order_id ON shipments(order_id);
-CREATE INDEX IF NOT EXISTS idx_shipments_status ON shipments(status);
-CREATE INDEX IF NOT EXISTS idx_shipments_supplier_status_created_at
-    ON shipments(supplier_id, status, created_at DESC);

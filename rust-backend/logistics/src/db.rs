@@ -1,6 +1,4 @@
-use crate::models::{
-    CreateShipmentRequest, ListShipmentQuery, Shipment, ShipmentStatus, UpdateShipmentStatusRequest,
-};
+use crate::models::{CreateShipmentRequest, Shipment, ShipmentStatus, UpdateShipmentStatusRequest};
 use chrono::Utc;
 use sqlx::PgPool;
 use uuid::Uuid;
@@ -25,9 +23,6 @@ impl LogisticsRepo {
             r#"
             INSERT INTO shipments (id, order_id, user_id, supplier_id, product_id, tracking_number, status, notes)
             VALUES ($1, $2, $3, $4, $5, $6, 'pending', $7)
-            ON CONFLICT(order_id) DO UPDATE SET
-                notes = COALESCE(EXCLUDED.notes, shipments.notes),
-                updated_at = NOW()
             RETURNING *
             "#,
         )
@@ -59,25 +54,11 @@ impl LogisticsRepo {
     pub async fn list_supplier_shipments(
         &self,
         supplier_id: Uuid,
-        query: &ListShipmentQuery,
     ) -> Result<Vec<Shipment>, sqlx::Error> {
-        let limit = query.limit.unwrap_or(50).clamp(1, 200);
-        let offset = query.offset.unwrap_or(0).max(0);
-
         sqlx::query_as::<_, Shipment>(
-            r#"
-            SELECT *
-            FROM shipments
-            WHERE supplier_id = $1
-              AND ($2::shipment_status IS NULL OR status = $2)
-            ORDER BY created_at DESC
-            LIMIT $3 OFFSET $4
-            "#,
+            "SELECT * FROM shipments WHERE supplier_id = $1 ORDER BY created_at DESC",
         )
         .bind(supplier_id)
-        .bind(query.status.as_ref())
-        .bind(limit)
-        .bind(offset)
         .fetch_all(&self.pool)
         .await
     }
@@ -87,17 +68,6 @@ impl LogisticsRepo {
         shipment_id: Uuid,
         req: &UpdateShipmentStatusRequest,
     ) -> Result<Shipment, sqlx::Error> {
-        let current = self.get_shipment(shipment_id).await?;
-        if !current.status.can_transition_to(&req.status) {
-            return Err(sqlx::Error::Protocol(
-                format!(
-                    "invalid status transition: {:?} -> {:?}",
-                    current.status, req.status
-                )
-                .into(),
-            ));
-        }
-
         let dispatched_at = if req.status == ShipmentStatus::Intransit {
             Some(Utc::now())
         } else {
@@ -138,7 +108,6 @@ impl LogisticsRepo {
             UPDATE shipments
             SET status = 'cancelled', updated_at = NOW()
             WHERE order_id = $1
-              AND status != 'delivered'
             RETURNING *
             "#,
         )
