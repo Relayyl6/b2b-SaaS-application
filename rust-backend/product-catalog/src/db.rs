@@ -43,7 +43,6 @@ impl ProductRepo {
         .await
     }
 
-    /// Returns products that belong to the given supplier.
     pub async fn get_by_supplier(&self, supplier_id: Uuid) -> Result<Vec<Product>, sqlx::Error> {
         sqlx::query_as::<_, Product>(
             r#"
@@ -77,7 +76,6 @@ impl ProductRepo {
         .await
     }
 
-    /// Updates a product and emits a product.updated event.
     pub async fn update_product(
         &self,
         supplier_id: Uuid,
@@ -122,7 +120,6 @@ impl ProductRepo {
         .await
     }
 
-    /// Deletes a product, emits product.deleted, and invalidates cache.
     pub async fn delete_product(
         &self,
         supplier_id: Uuid,
@@ -175,7 +172,6 @@ impl ProductRepo {
         Ok(rows)
     }
 
-    /// Creates products in bulk and emits product.created events.
     pub async fn bulk_create(
         &self,
         items: &[CreateProductRequest],
@@ -211,7 +207,6 @@ impl ProductRepo {
         Ok(created)
     }
 
-    /// Stores uploaded asset metadata for a product.
     pub async fn register_product_asset(
         &self,
         supplier_id: Uuid,
@@ -283,7 +278,6 @@ impl ProductRepo {
         Ok(asset)
     }
 
-    /// Lists stored asset metadata for a product.
     pub async fn list_product_assets(
         &self,
         supplier_id: Uuid,
@@ -304,7 +298,6 @@ impl ProductRepo {
         .await
     }
 
-    /// Deletes product asset metadata by asset id.
     pub async fn delete_product_asset(
         &self,
         supplier_id: Uuid,

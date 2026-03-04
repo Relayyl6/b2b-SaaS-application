@@ -14,7 +14,6 @@ pub enum PublishError {
     Rabbit(#[from] lapin::Error),
 }
 
-/// Publishes a product event message to RabbitMQ.
 pub async fn publish_example_event(ev: &ProductEvent) -> Result<(), PublishError> {
     println!("[DEBUG] Starting publish_example_event_to_rabbitMQ");
 

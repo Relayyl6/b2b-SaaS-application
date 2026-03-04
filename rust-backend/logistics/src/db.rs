@@ -1,6 +1,4 @@
-use crate::models::{
-    CreateShipmentRequest, ListShipmentQuery, Shipment, ShipmentStatus, UpdateShipmentStatusRequest,
-};
+use crate::models::{CreateShipmentRequest, Shipment, ShipmentStatus, UpdateShipmentStatusRequest};
 use chrono::Utc;
 use sqlx::PgPool;
 use uuid::Uuid;
@@ -11,12 +9,10 @@ pub struct LogisticsRepo {
 }
 
 impl LogisticsRepo {
-    /// Creates a new instance with the provided dependencies.
     pub fn new(pool: &PgPool) -> Self {
         Self { pool: pool.clone() }
     }
 
-    /// Creates a shipment and publishes logistics.shipment_created.
     pub async fn create_shipment(
         &self,
         req: &CreateShipmentRequest,
@@ -27,9 +23,6 @@ impl LogisticsRepo {
             r#"
             INSERT INTO shipments (id, order_id, user_id, supplier_id, product_id, tracking_number, status, notes)
             VALUES ($1, $2, $3, $4, $5, $6, 'pending', $7)
-            ON CONFLICT(order_id) DO UPDATE SET
-                notes = COALESCE(EXCLUDED.notes, shipments.notes),
-                updated_at = NOW()
             RETURNING *
             "#,
         )
@@ -44,7 +37,6 @@ impl LogisticsRepo {
         .await
     }
 
-    /// Returns shipment details by id.
     pub async fn get_shipment(&self, shipment_id: Uuid) -> Result<Shipment, sqlx::Error> {
         sqlx::query_as::<_, Shipment>("SELECT * FROM shipments WHERE id = $1")
             .bind(shipment_id)
@@ -52,7 +44,6 @@ impl LogisticsRepo {
             .await
     }
 
-    /// Returns one shipment by order id.
     pub async fn get_by_order_id(&self, order_id: Uuid) -> Result<Shipment, sqlx::Error> {
         sqlx::query_as::<_, Shipment>("SELECT * FROM shipments WHERE order_id = $1")
             .bind(order_id)
@@ -60,50 +51,23 @@ impl LogisticsRepo {
             .await
     }
 
-    /// Returns supplier shipments using filter and pagination query fields.
     pub async fn list_supplier_shipments(
         &self,
         supplier_id: Uuid,
-        query: &ListShipmentQuery,
     ) -> Result<Vec<Shipment>, sqlx::Error> {
-        let limit = query.limit.unwrap_or(50).clamp(1, 200);
-        let offset = query.offset.unwrap_or(0).max(0);
-
         sqlx::query_as::<_, Shipment>(
-            r#"
-            SELECT *
-            FROM shipments
-            WHERE supplier_id = $1
-              AND ($2::shipment_status IS NULL OR status = $2)
-            ORDER BY created_at DESC
-            LIMIT $3 OFFSET $4
-            "#,
+            "SELECT * FROM shipments WHERE supplier_id = $1 ORDER BY created_at DESC",
         )
         .bind(supplier_id)
-        .bind(query.status.as_ref())
-        .bind(limit)
-        .bind(offset)
         .fetch_all(&self.pool)
         .await
     }
 
-    /// Updates shipment status and publishes logistics.shipment_updated.
     pub async fn update_status(
         &self,
         shipment_id: Uuid,
         req: &UpdateShipmentStatusRequest,
     ) -> Result<Shipment, sqlx::Error> {
-        let current = self.get_shipment(shipment_id).await?;
-        if !current.status.can_transition_to(&req.status) {
-            return Err(sqlx::Error::Protocol(
-                format!(
-                    "invalid status transition: {:?} -> {:?}",
-                    current.status, req.status
-                )
-                .into(),
-            ));
-        }
-
         let dispatched_at = if req.status == ShipmentStatus::Intransit {
             Some(Utc::now())
         } else {
@@ -138,14 +102,12 @@ impl LogisticsRepo {
         .await
     }
 
-    /// Cancels the shipment for an order when cancellation is allowed.
     pub async fn cancel_by_order_id(&self, order_id: Uuid) -> Result<Shipment, sqlx::Error> {
         sqlx::query_as::<_, Shipment>(
             r#"
             UPDATE shipments
             SET status = 'cancelled', updated_at = NOW()
             WHERE order_id = $1
-              AND status != 'delivered'
             RETURNING *
             "#,
         )

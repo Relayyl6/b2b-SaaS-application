@@ -155,7 +155,6 @@ pub async fn update_product(
     }
 }
 
-/// Deletes a product, emits product.deleted, and invalidates cache.
 pub async fn delete_product(
     repo: web::Data<ProductRepo>,
     redis_pub: web::Data<RedisPublisher>,
@@ -272,7 +271,6 @@ pub async fn bulk_create(
     }
 }
 
-/// Stores uploaded asset metadata for a product.
 pub async fn register_product_asset(
     repo: web::Data<ProductRepo>,
     path: web::Path<(Uuid, Uuid)>,
@@ -292,7 +290,6 @@ pub async fn register_product_asset(
     }
 }
 
-/// Lists stored asset metadata for a product.
 pub async fn list_product_assets(
     repo: web::Data<ProductRepo>,
     path: web::Path<(Uuid, Uuid)>,
@@ -307,7 +304,6 @@ pub async fn list_product_assets(
     }
 }
 
-/// Deletes product asset metadata by asset id.
 pub async fn delete_product_asset(
     repo: web::Data<ProductRepo>,
     path: web::Path<(Uuid, Uuid, Uuid)>,
@@ -326,7 +322,6 @@ pub async fn delete_product_asset(
     }
 }
 
-/// Generates signed Cloudinary upload parameters for direct client uploads.
 pub async fn sign_cloudinary_upload(req: web::Json<SignAssetUploadRequest>) -> impl Responder {
     let cloud_name = match env::var("CLOUDINARY_CLOUD_NAME") {
         Ok(v) => v,
