@@ -10,10 +10,53 @@ pub struct ProductRepo {
 }
 
 impl ProductRepo {
+    /// Creates a new ProductRepo using the provided PostgreSQL connection pool.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use sqlx::PgPool;
+    /// // create or obtain a PgPool (connect_lazy returns a pool without performing an async connect)
+    /// let pool = PgPool::connect_lazy("postgres://user:pass@localhost/db");
+    /// let repo = ProductRepo::new(pool);
+    /// ```
     pub fn new(pool: PgPool) -> Self {
         Self { pool }
     }
 
+    /// Creates a new product and returns the inserted product row.
+    ///
+    /// Applies defaulting for missing fields: `available` defaults to `true`, `quantity` defaults to `0`,
+    /// `product_id` defaults to a newly generated UUID, and `low_stock_threshold` defaults to `10`.
+    ///
+    /// # Returns
+    ///
+    /// The newly created `Product` row as stored in the database.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use uuid::Uuid;
+    /// # use sqlx::PgPool;
+    /// # use product_catalog::{ProductRepo, CreateProductRequest};
+    /// # async fn example(pool: PgPool) -> Result<(), sqlx::Error> {
+    /// let repo = ProductRepo::new(pool);
+    /// let req = CreateProductRequest {
+    ///     supplier_id: Uuid::new_v4(),
+    ///     name: "Example".into(),
+    ///     description: None,
+    ///     category: None,
+    ///     price: 9.99,
+    ///     unit: "each".into(),
+    ///     product_id: None,
+    ///     quantity: None,
+    ///     available: None,
+    ///     low_stock_threshold: None,
+    /// };
+    /// let product = repo.create_product(&req).await?;
+    /// assert_eq!(product.name, "Example");
+    /// # Ok(()) }
+    /// ```
     pub async fn create_product(&self, req: &CreateProductRequest) -> Result<Product, sqlx::Error> {
         let available = req.available.unwrap_or(true);
         let quantity = req.quantity.unwrap_or(0);
@@ -41,6 +84,22 @@ impl ProductRepo {
         .await
     }
 
+    /// Retrieve all products for the given supplier, ordered by name.
+    ///
+    /// The returned vector contains `Product` rows whose `supplier_id` matches the provided `supplier_id`.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # use uuid::Uuid;
+    /// # use product_catalog::db::ProductRepo;
+    /// # async fn example(repo: &ProductRepo) -> Result<(), sqlx::Error> {
+    /// let supplier = Uuid::new_v4();
+    /// let products = repo.get_by_supplier(supplier).await?;
+    /// assert!(products.iter().all(|p| p.supplier_id == supplier));
+    /// # Ok(())
+    /// # }
+    /// ```
     pub async fn get_by_supplier(&self, supplier_id: Uuid) -> Result<Vec<Product>, sqlx::Error> {
         sqlx::query_as::<_, Product>(
             r#"
@@ -55,6 +114,20 @@ impl ProductRepo {
         .await
     }
 
+    /// Fetches the product matching the given supplier and product IDs.
+    ///
+    /// Returns the matching `Product` row if one exists for the provided `supplier_id` and `product_id`.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// # // requires a running async runtime and a `ProductRepo` instance named `repo`
+    /// # use uuid::Uuid;
+    /// let supplier_id = Uuid::parse_str("11111111-2222-3333-4444-555555555555").unwrap();
+    /// let product_id = Uuid::parse_str("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee").unwrap();
+    /// let product = repo.get_one(supplier_id, product_id).await.unwrap();
+    /// assert_eq!(product.product_id, product_id);
+    /// ```
     pub async fn get_one(
         &self,
         supplier_id: Uuid,
@@ -73,6 +146,41 @@ impl ProductRepo {
         .await
     }
 
+    /// Update product fields for a supplier and return the updated product.
+    ///
+    /// Fields set to `None` in `req` leave the existing values unchanged. If
+    /// `req.quantity_change` is `Some(n)`, the stored quantity is incremented by `n`;
+    /// otherwise the quantity is set from `req.quantity` when provided.
+    ///
+    /// # Returns
+    ///
+    /// `Product` representing the updated database row.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use uuid::Uuid;
+    /// # use crate::db::ProductRepo;
+    /// # use crate::models::UpdateProductRequest;
+    /// # async fn doc_example(repo: &ProductRepo) -> Result<(), sqlx::Error> {
+    /// let supplier_id = Uuid::new_v4();
+    /// let product_id = Uuid::new_v4();
+    /// let req = UpdateProductRequest {
+    ///     name: Some("Updated name".into()),
+    ///     description: None,
+    ///     category: None,
+    ///     price: None,
+    ///     unit: None,
+    ///     quantity: None,
+    ///     available: None,
+    ///     quantity_change: Some(3),
+    ///     low_stock_threshold: None,
+    /// };
+    /// let updated = repo.update_product(supplier_id, product_id, &req).await?;
+    /// assert_eq!(updated.product_id, product_id);
+    /// # Ok(())
+    /// # }
+    /// ```
     pub async fn update_product(
         &self,
         supplier_id: Uuid,
@@ -117,6 +225,26 @@ impl ProductRepo {
         .await
     }
 
+    /// Deletes the product matching the given supplier and product IDs.
+    ///
+    /// Removes the product row from the database for the provided `supplier_id` and `product_id`.
+    ///
+    /// # Returns
+    ///
+    /// `u64` — the number of rows deleted (0 if no matching product was found, 1 if deleted).
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use uuid::Uuid;
+    ///
+    /// # async fn example(repo: &ProductRepo) -> Result<(), sqlx::Error> {
+    /// let supplier = Uuid::parse_str("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa").unwrap();
+    /// let product = Uuid::parse_str("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb").unwrap();
+    /// let deleted = repo.delete_product(supplier, product).await?;
+    /// assert!(deleted <= 1);
+    /// # Ok(()) }
+    /// ```
     pub async fn delete_product(
         &self,
         supplier_id: Uuid,
@@ -132,6 +260,23 @@ impl ProductRepo {
         Ok(result.rows_affected())
     }
 
+    /// Searches products applying optional filters and returns paginated results.
+    ///
+    /// Returns a vector of `Product` rows that match the provided filters, ordered by name.
+    /// Filters are ignored when passed as `None`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # tokio_test::block_on(async {
+    /// // `repo` is a `ProductRepo` connected to a test database.
+    /// let products = repo
+    ///     .search_products(None, None, None, None, None, 10, 0)
+    ///     .await
+    ///     .unwrap();
+    /// assert!(products.len() <= 10);
+    /// # });
+    /// ```
     pub async fn search_products(
         &self,
         category: Option<String>,
@@ -168,6 +313,37 @@ impl ProductRepo {
         Ok(rows)
     }
 
+    /// Creates multiple products within a single database transaction.
+    ///
+    /// Applies defaults for `product_id` (new UUID), `quantity` (0), `available` (true),
+    /// and `low_stock_threshold` (10) when those fields are not provided on individual items.
+    /// The operation is atomic: either all products are inserted and the transaction is committed,
+    /// or an error causes the transaction to be rolled back.
+    ///
+    /// Returns the list of inserted `Product` records in the same order as the input items.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// // CreateProductRequest fields shown for illustration; adapt to your types.
+    /// let items = vec![
+    ///     CreateProductRequest {
+    ///         supplier_id: some_supplier_id,
+    ///         name: "Widget".into(),
+    ///         description: "A useful widget".into(),
+    ///         category: "tools".into(),
+    ///         price: 9.99,
+    ///         unit: "each".into(),
+    ///         product_id: None,
+    ///         quantity: None,
+    ///         available: None,
+    ///         low_stock_threshold: None,
+    ///     },
+    /// ];
+    ///
+    /// let created = repo.bulk_create(&items).await?;
+    /// assert_eq!(created.len(), items.len());
+    /// ```
     pub async fn bulk_create(
         &self,
         items: &[CreateProductRequest],
@@ -203,6 +379,41 @@ impl ProductRepo {
         Ok(created)
     }
 
+    /// Registers a product asset entry and returns the created `ProductAsset`.
+    ///
+    /// If `req.is_primary` is true, existing assets for the given supplier and product will have their
+    /// `is_primary` flag cleared before the new asset is inserted. The `provider` defaults to
+    /// `"cloudinary"` when not provided.
+    ///
+    /// # Errors
+    ///
+    /// Returns `sqlx::Error::RowNotFound` if no product exists matching the `supplier_id` and
+    /// `product_id`. Other database failures return the corresponding `sqlx::Error`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use uuid::Uuid;
+    /// # async fn doc(pool: &crate::PgPool) -> Result<(), sqlx::Error> {
+    /// let repo = crate::ProductRepo::new(pool.clone());
+    /// let supplier = Uuid::new_v4();
+    /// let product = Uuid::new_v4();
+    /// let req = crate::RegisterProductAssetRequest {
+    ///     provider: None,
+    ///     public_id: "public-id".into(),
+    ///     url: "http://example.com/image.jpg".into(),
+    ///     secure_url: "https://example.com/image.jpg".into(),
+    ///     width: Some(800),
+    ///     height: Some(600),
+    ///     bytes: Some(150_000),
+    ///     format: Some("jpg".into()),
+    ///     alt_text: Some("Example image".into()),
+    ///     is_primary: Some(true),
+    /// };
+    /// let asset = repo.register_product_asset(supplier, product, &req).await?;
+    /// assert_eq!(asset.product_id, product);
+    /// # Ok(()) }
+    /// ```
     pub async fn register_product_asset(
         &self,
         supplier_id: Uuid,
@@ -274,6 +485,21 @@ impl ProductRepo {
         Ok(asset)
     }
 
+    /// Returns the stored product asset metadata for a specific product.
+    ///
+    /// Results are ordered with `is_primary` assets first, then by `created_at` descending (newest first).
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use uuid::Uuid;
+    /// # async fn example(repo: &crate::db::ProductRepo) -> Result<(), sqlx::Error> {
+    /// let supplier_id = Uuid::parse_str("11111111-1111-1111-1111-111111111111").unwrap();
+    /// let product_id = Uuid::parse_str("22222222-2222-2222-2222-222222222222").unwrap();
+    /// let assets = repo.list_product_assets(supplier_id, product_id).await?;
+    /// assert!(assets.iter().all(|a| a.product_id == product_id));
+    /// # Ok(()) }
+    /// ```
     pub async fn list_product_assets(
         &self,
         supplier_id: Uuid,
@@ -294,6 +520,24 @@ impl ProductRepo {
         .await
     }
 
+    /// Delete a product asset row matching the given supplier, product, and asset IDs.
+    ///
+    /// Returns the number of rows deleted.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use uuid::Uuid;
+    ///
+    /// # async fn example(repo: &crate::db::ProductRepo) {
+    /// let supplier_id = Uuid::new_v4();
+    /// let product_id = Uuid::new_v4();
+    /// let asset_id = Uuid::new_v4();
+    ///
+    /// let deleted = repo.delete_product_asset(supplier_id, product_id, asset_id).await.unwrap();
+    /// // `deleted` is the number of rows removed (0 if none matched)
+    /// # }
+    /// ```
     pub async fn delete_product_asset(
         &self,
         supplier_id: Uuid,

@@ -14,6 +14,23 @@ use tokio::spawn;
 use crate::publisher::RedisPublisher;
 use crate::redis_sub::listen_to_redis_events;
 
+/// Starts the logistics HTTP service.
+///
+/// Loads environment variables and logging, connects to PostgreSQL and runs migrations,
+/// configures Redis client and publisher (falls back to no-op publisher if Redis is unavailable),
+/// optionally spawns a background Redis event listener, and runs the Actix Web server
+/// with shipment-related routes bound to the configured service port.
+///
+/// # Returns
+///
+/// `Ok(())` if the server runs successfully; an `Err` if binding or runtime I/O fails.
+///
+/// # Examples
+///
+/// ```rust,no_run
+/// // Starts the server (execution skipped in doctests)
+/// # async fn _example() { let _ = crate::main().await; }
+/// ```
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
     dotenv().ok();
