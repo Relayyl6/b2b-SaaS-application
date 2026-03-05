@@ -1,11 +1,11 @@
-use actix_web::{App, HttpServer, web};
+use actix_web::{web, App, HttpServer};
 
 mod db;
 mod models;
-mod routes;
 mod redis_pub;
-mod worker;
 mod redis_sub;
+mod routes;
+mod worker;
 use tokio::spawn;
 
 use crate::worker::order_expiration_worker as expiration_worker;
@@ -21,6 +21,7 @@ use crate::redis_sub::listen_to_redis_events;
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
     dotenv().ok();
+    tracing_subscriber::fmt::init();
 
     let redis_url = env::var("REDIS_URL").ok();
     let port = env::var("PORT").unwrap_or_else(|_| "3006".to_string());
@@ -30,9 +31,19 @@ async fn main() -> std::io::Result<()> {
 
     let pool = db::get_db_pool().await;
 
-    sqlx::migrate!("./migrations").run(&pool).await.expect("Migrations Failed");
+    sqlx::migrate!("./migrations")
+        .run(&pool)
+        .await
+        .expect("Migrations Failed");
 
-    let redis_client = web::Data::new(RedisClient::open(redis_url.clone().unwrap()).expect("redis client"));
+    let redis_client = web::Data::new(
+        RedisClient::open(
+            redis_url
+                .clone()
+                .unwrap_or_else(|| "redis://127.0.0.1:6379".to_string()),
+        )
+        .expect("redis client"),
+    );
     let redis_pub = match &redis_url {
         Some(url) => match RedisPublisher::new(url).await {
             Ok(pubw) => web::Data::new(pubw),
@@ -48,7 +59,8 @@ async fn main() -> std::io::Result<()> {
         }
     };
 
-    expiration_worker::start_order_expiration_worker(pool.clone(), redis_pub.get_ref().clone()).await;
+    expiration_worker::start_order_expiration_worker(pool.clone(), redis_pub.get_ref().clone())
+        .await;
 
     // spawn Redis listener in background
     let pool_clone = pool.clone();

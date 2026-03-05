@@ -1,15 +1,20 @@
-use actix_web::{web, HttpResponse, Responder};
-use uuid::Uuid;
-use redis::AsyncCommands;
 use crate::db::ProductRepo;
-use crate::models::{CreateProductRequest, UpdateProductRequest, BulkCreateRequest, ProductEvent};
-// use crate::models::Product;
-use crate::redis_pub::RedisPublisher;
-use sqlx;
-use redis;
-use serde_json::json;
+use crate::models::{
+    BulkCreateRequest, CreateProductRequest, ProductEvent, RegisterProductAssetRequest,
+    SignAssetUploadRequest, SignedUploadResponse, UpdateProductRequest,
+};
 use crate::rabbit_pub::publish_example_event;
+use crate::redis_pub::RedisPublisher;
+use actix_web::{HttpResponse, Responder, web};
+use chrono::Utc;
+use redis::AsyncCommands;
+use serde_json::json;
+use sha1::{Digest, Sha1};
+use std::collections::HashMap;
+use std::env;
+use uuid::Uuid;
 
+/// Creates a product and emits best-effort integration events.
 pub async fn create_product(
     repo: web::Data<ProductRepo>,
     redis_pub: web::Data<RedisPublisher>,
@@ -17,7 +22,6 @@ pub async fn create_product(
 ) -> impl Responder {
     match repo.create_product(&req).await {
         Ok(product) => {
-            // publish event
             let event = ProductEvent {
                 event_type: "product.created".to_string(),
                 product_id: product.product_id,
@@ -27,15 +31,12 @@ pub async fn create_product(
                 name: Some(product.name.clone()),
                 description: product.description.clone(),
                 quantity: Some(product.quantity),
-                low_stock_threshold: None,
+                low_stock_threshold: Some(product.low_stock_threshold),
                 unit: Some(product.unit.clone()),
                 quantity_change: None,
                 ..Default::default()
             };
-
-            if let Err(e) = redis_pub.publish("product.created", &event).await {
-                eprintln!("Redis publish error (product.created): {:?}", e);
-            }
+            redis_pub.publish_async("product.created", event.clone());
             if let Err(e) = publish_example_event(&event).await {
                 eprintln!("Rabbit publish error (product.created): {:?}", e);
             }
@@ -48,6 +49,7 @@ pub async fn create_product(
     }
 }
 
+/// Returns all products for a supplier and emits view events.
 pub async fn get_products_for_supplier(
     repo: web::Data<ProductRepo>,
     redis_pub: web::Data<RedisPublisher>,
@@ -56,9 +58,7 @@ pub async fn get_products_for_supplier(
     let supplier_id = path.into_inner();
     match repo.get_by_supplier(supplier_id).await {
         Ok(items) => {
-            // publish event
             for item in &items {
-                println!("{:?}", item);
                 let event = ProductEvent {
                     event_type: "product.viewed".to_string(),
                     product_id: item.product_id,
@@ -68,15 +68,12 @@ pub async fn get_products_for_supplier(
                     name: Some(item.name.clone()),
                     description: item.description.clone(),
                     quantity: Some(item.quantity),
-                    low_stock_threshold: None,
+                    low_stock_threshold: Some(item.low_stock_threshold),
                     unit: Some(item.unit.clone()),
                     quantity_change: None,
                     ..Default::default()
                 };
-
-                if let Err(e) = redis_pub.publish("product.viewed", &event).await {
-                    eprintln!("Redis publish error (product.viewed): {:?}", e);
-                }
+                redis_pub.publish_async("product.viewed", event.clone());
             }
             HttpResponse::Ok().json(&items)
         }
@@ -87,6 +84,7 @@ pub async fn get_products_for_supplier(
     }
 }
 
+/// Returns a single product by supplier and product id.
 pub async fn get_single_product(
     repo: web::Data<ProductRepo>,
     path: web::Path<(Uuid, Uuid)>,
@@ -102,6 +100,7 @@ pub async fn get_single_product(
     }
 }
 
+/// Updates a product and emits a product.updated event.
 pub async fn update_product(
     repo: web::Data<ProductRepo>,
     redis_pub: web::Data<RedisPublisher>,
@@ -109,16 +108,16 @@ pub async fn update_product(
     req: web::Json<UpdateProductRequest>,
 ) -> impl Responder {
     let (supplier_id, product_id) = path.into_inner();
-
-    // If quantity_change is present, adjust quantity field accordingly before update
     let mut update_data = req.into_inner();
 
-    if let Some(_change) = update_data.quantity_change {
-        // If quantity_change is set, ignore explicit quantity — it’ll be handled in SQL logic already
+    if update_data.quantity_change.is_some() {
         update_data.quantity = None;
     }
 
-    match repo.update_product(supplier_id, product_id, &update_data).await {
+    match repo
+        .update_product(supplier_id, product_id, &update_data)
+        .await
+    {
         Ok(p) => {
             let event = ProductEvent {
                 event_type: "product.updated".to_string(),
@@ -135,10 +134,7 @@ pub async fn update_product(
                 available: Some(p.available),
                 ..Default::default()
             };
-
-            if let Err(e) = redis_pub.publish("product.updated", &event).await {
-                eprintln!("Redis publish error (product.updated): {:?}", e);
-            }
+            redis_pub.publish_async("product.updated", event.clone());
 
             HttpResponse::Ok().json(p)
         }
@@ -150,7 +146,7 @@ pub async fn update_product(
     }
 }
 
-
+/// Deletes a product, emits product.deleted, and invalidates cache.
 pub async fn delete_product(
     repo: web::Data<ProductRepo>,
     redis_pub: web::Data<RedisPublisher>,
@@ -164,22 +160,12 @@ pub async fn delete_product(
                 "event_type": "product.deleted",
                 "product_id": product_id,
                 "supplier_id": supplier_id,
-                "name": "deleted", // either this or scatter the Inventory_microservice to satisfy goal. I choose lazy approach
-                "quantity": null,
-                "low_stock_threshold": null,
-                "unit": null,
-                "quantity_change": null
             });
+            redis_pub.publish_async("product.deleted", event.clone());
 
-            // publish - best-effort
-            if let Err(e) = redis_pub.publish("product.deleted", &event).await {
-                eprintln!("Redis publish error (product.deleted): {:?}", e);
-            }
-
-            // invalidate cache - best-effort
             if let Ok(mut conn) = redis_client.get_multiplexed_async_connection().await {
                 let cache_key = format!("products:supplier:{}", supplier_id);
-                let _ : Result<(), _> = conn.del(cache_key).await;
+                let _: Result<(), _> = conn.del(cache_key).await;
             }
 
             HttpResponse::Ok().body("Product deleted successfully")
@@ -192,20 +178,43 @@ pub async fn delete_product(
     }
 }
 
+/// Searches products by optional query parameters.
 pub async fn search_products(
     repo: web::Data<ProductRepo>,
-    query: web::Query<std::collections::HashMap<String, String>>,
+    query: web::Query<HashMap<String, String>>,
 ) -> impl Responder {
-    // parse optional query params
     let category = query.get("category").cloned();
     let min_price = query.get("min_price").and_then(|s| s.parse::<f64>().ok());
     let max_price = query.get("max_price").and_then(|s| s.parse::<f64>().ok());
-    let supplier_id = query.get("supplier_id").and_then(|s| Uuid::parse_str(s).ok());
-    let product_id = query.get("product_id").and_then(|s| Uuid::parse_str(s).ok());
-    let limit = query.get("limit").and_then(|s| s.parse::<i64>().ok()).unwrap_or(50);
-    let offset = query.get("offset").and_then(|s| s.parse::<i64>().ok()).unwrap_or(0);
+    let supplier_id = query
+        .get("supplier_id")
+        .and_then(|s| Uuid::parse_str(s).ok());
+    let product_id = query
+        .get("product_id")
+        .and_then(|s| Uuid::parse_str(s).ok());
+    let limit = query
+        .get("limit")
+        .and_then(|s| s.parse::<i64>().ok())
+        .unwrap_or(50)
+        .clamp(1, 200);
+    let offset = query
+        .get("offset")
+        .and_then(|s| s.parse::<i64>().ok())
+        .unwrap_or(0)
+        .max(0);
 
-    match repo.search_products(category, min_price, max_price, supplier_id, product_id, limit, offset).await {
+    match repo
+        .search_products(
+            category,
+            min_price,
+            max_price,
+            product_id,
+            supplier_id,
+            limit,
+            offset,
+        )
+        .await
+    {
         Ok(rows) => HttpResponse::Ok().json(rows),
         Err(e) => {
             eprintln!("Search DB error: {:?}", e);
@@ -214,6 +223,7 @@ pub async fn search_products(
     }
 }
 
+/// Creates products in bulk and emits product.created events.
 pub async fn bulk_create(
     repo: web::Data<ProductRepo>,
     redis_pub: web::Data<RedisPublisher>,
@@ -221,7 +231,6 @@ pub async fn bulk_create(
 ) -> impl Responder {
     match repo.bulk_create(&req.products).await {
         Ok(created) => {
-            // Optionally publish created events in a loop (or send a single aggregated event)
             for p in &created {
                 let event = ProductEvent {
                     event_type: "product.created".to_string(),
@@ -232,19 +241,12 @@ pub async fn bulk_create(
                     category: Some(p.category.clone()),
                     price: Some(p.price),
                     quantity: Some(p.quantity),
-                    low_stock_threshold: None,
+                    low_stock_threshold: Some(p.low_stock_threshold),
                     unit: Some(p.unit.clone()),
                     quantity_change: None,
-                    // available: None,
-                    // order_id: None,
-                    // reservation_id: None,
-                    // timestamp: None,
                     ..Default::default()
                 };
-
-                if let Err(e) = redis_pub.publish("product.created", &event).await {
-                    eprintln!("Redis publish error in bulk: {:?}", e);
-                }
+                redis_pub.publish_async("product.created", event.clone());
             }
             HttpResponse::Created().json(created)
         }
@@ -253,4 +255,99 @@ pub async fn bulk_create(
             HttpResponse::InternalServerError().body("Bulk create failed")
         }
     }
+}
+
+/// Stores uploaded asset metadata for a product.
+pub async fn register_product_asset(
+    repo: web::Data<ProductRepo>,
+    path: web::Path<(Uuid, Uuid)>,
+    req: web::Json<RegisterProductAssetRequest>,
+) -> impl Responder {
+    let (supplier_id, product_id) = path.into_inner();
+    match repo
+        .register_product_asset(supplier_id, product_id, &req)
+        .await
+    {
+        Ok(asset) => HttpResponse::Created().json(asset),
+        Err(sqlx::Error::RowNotFound) => HttpResponse::NotFound().body("Product not found"),
+        Err(e) => {
+            eprintln!("Register product asset DB error: {:?}", e);
+            HttpResponse::InternalServerError().body("Failed to register product asset")
+        }
+    }
+}
+
+/// Lists stored asset metadata for a product.
+pub async fn list_product_assets(
+    repo: web::Data<ProductRepo>,
+    path: web::Path<(Uuid, Uuid)>,
+) -> impl Responder {
+    let (supplier_id, product_id) = path.into_inner();
+    match repo.list_product_assets(supplier_id, product_id).await {
+        Ok(assets) => HttpResponse::Ok().json(assets),
+        Err(e) => {
+            eprintln!("List product assets DB error: {:?}", e);
+            HttpResponse::InternalServerError().body("Failed to list product assets")
+        }
+    }
+}
+
+/// Deletes product asset metadata by asset id.
+pub async fn delete_product_asset(
+    repo: web::Data<ProductRepo>,
+    path: web::Path<(Uuid, Uuid, Uuid)>,
+) -> impl Responder {
+    let (supplier_id, product_id, asset_id) = path.into_inner();
+    match repo
+        .delete_product_asset(supplier_id, product_id, asset_id)
+        .await
+    {
+        Ok(0) => HttpResponse::NotFound().body("Asset not found"),
+        Ok(_) => HttpResponse::Ok().body("Asset deleted"),
+        Err(e) => {
+            eprintln!("Delete product asset DB error: {:?}", e);
+            HttpResponse::InternalServerError().body("Failed to delete product asset")
+        }
+    }
+}
+
+/// Generates signed Cloudinary upload parameters for direct client uploads.
+pub async fn sign_cloudinary_upload(req: web::Json<SignAssetUploadRequest>) -> impl Responder {
+    let cloud_name = match env::var("CLOUDINARY_CLOUD_NAME") {
+        Ok(v) => v,
+        Err(_) => return HttpResponse::ServiceUnavailable().body("Missing CLOUDINARY_CLOUD_NAME"),
+    };
+    let api_key = match env::var("CLOUDINARY_API_KEY") {
+        Ok(v) => v,
+        Err(_) => return HttpResponse::ServiceUnavailable().body("Missing CLOUDINARY_API_KEY"),
+    };
+    let api_secret = match env::var("CLOUDINARY_API_SECRET") {
+        Ok(v) => v,
+        Err(_) => return HttpResponse::ServiceUnavailable().body("Missing CLOUDINARY_API_SECRET"),
+    };
+
+    let folder = req
+        .folder
+        .clone()
+        .unwrap_or_else(|| "b2b-saas/products".to_string());
+    let timestamp = Utc::now().timestamp();
+
+    let mut sign_parts = vec![format!("folder={folder}"), format!("timestamp={timestamp}")];
+    if let Some(public_id) = &req.public_id {
+        sign_parts.push(format!("public_id={public_id}"));
+    }
+    sign_parts.sort();
+    let to_sign = format!("{}{}", sign_parts.join("&"), api_secret);
+    let mut hasher = Sha1::new();
+    hasher.update(to_sign.as_bytes());
+    let signature = format!("{:x}", hasher.finalize());
+
+    HttpResponse::Ok().json(SignedUploadResponse {
+        cloud_name,
+        api_key,
+        timestamp,
+        signature,
+        folder,
+        public_id: req.public_id.clone(),
+    })
 }

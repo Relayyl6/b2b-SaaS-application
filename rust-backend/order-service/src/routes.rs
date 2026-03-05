@@ -1,12 +1,12 @@
-use actix_web::{get, post, put, delete, web, HttpResponse};
+use actix_web::{delete, get, post, put, web, HttpResponse};
+use chrono::{Duration, Utc};
+use serde_json::json;
 use sqlx::PgPool;
 use uuid::Uuid;
-use serde_json::json;
-use chrono::{Duration, Utc};
 
 use crate::redis_pub::RedisPublisher;
 
-use crate::models::{CreateOrderRequest, OrderStatus, OrderEvent, UpdateOrderStatus, Order};
+use crate::models::{CreateOrderRequest, Order, OrderEvent, OrderStatus, UpdateOrderStatus};
 
 #[post("/orders")]
 pub async fn create_order(
@@ -69,17 +69,13 @@ pub async fn create_order(
 
                 ..Default::default()
             };
-
-
-            if let Err(e) = redis_pub.publish("order.created", &event).await {
-                eprintln!("Redis publish error (order.created): {:?}", e);
-            }
+            redis_pub.publish_async("order.created", event.clone());
 
             HttpResponse::Created().json(serde_json::json!({
                 "message": "Order successfully created",
                 "id": order,
             }))
-        },
+        }
         Err(err) => {
             eprintln!("Error creating order: {}", err);
             HttpResponse::InternalServerError().json(json!({"error": "Failed to create order"}))
@@ -88,17 +84,14 @@ pub async fn create_order(
 }
 
 #[get("/orders/{id}")]
-pub async fn get_order(
-    pool: web::Data<PgPool>,
-    path: web::Path<Uuid>
-) -> HttpResponse {
+pub async fn get_order(pool: web::Data<PgPool>, path: web::Path<Uuid>) -> HttpResponse {
     let order_id = path.into_inner();
     let result = sqlx::query_as::<_, Order>(
         r#"
             SELECT *
             FROM orders
             WHERE id = $1
-        "#
+        "#,
     )
     .bind(order_id)
     .fetch_one(pool.get_ref())
@@ -121,9 +114,9 @@ pub async fn update_status(
     let new_status = req.new_status.clone().unwrap_or(OrderStatus::Pending);
     let user_id = req.user_id;
     let order_timestamp = req.order_timestamp.unwrap_or(Utc::now());
-    let expires_at = req.expires_at.unwrap_or(
-        Utc::now() + Duration::seconds(2 * 24 * 60 * 60)
-    );
+    let expires_at = req
+        .expires_at
+        .unwrap_or(Utc::now() + Duration::seconds(2 * 24 * 60 * 60));
     let product_id = req.product_id.unwrap_or(Uuid::new_v4());
 
     // 1️⃣ Update status and return the final updated status
@@ -137,7 +130,7 @@ pub async fn update_status(
                 updated_at = NOW()
             WHERE id = $4 AND product_id = $5 AND user_id = $6
             RETURNING *
-        "#
+        "#,
     )
     .bind(new_status)
     .bind(order_timestamp)
@@ -197,12 +190,9 @@ pub async fn update_status(
 
                         // Add order_timestamp for event ordering
                         timestamp: order.order_timestamp,
+                        order_timestamp: Some(order.order_timestamp),
                     };
-
-
-                    if let Err(e) = redis_pub.publish("order.cancelled", &cancel_event).await {
-                        eprintln!("Redis publish error (order.cancelled): {:?}", e);
-                    }
+                    redis_pub.publish_async("order.cancelled", cancel_event.clone());
                     println!("Order {} cancelled", order.id);
                 }
 
@@ -229,7 +219,7 @@ pub async fn update_status(
 
                 _ => {
                     // fallback for new statuses
-                        println!("Order {} updated to {:?}", order.id, order.status);
+                    println!("Order {} updated to {:?}", order.id, order.status);
                 }
             }
 
@@ -238,16 +228,13 @@ pub async fn update_status(
                 "message": "Order status updated",
                 "status": order
             }))
-        },
+        }
         Err(sqlx::Error::RowNotFound) => {
-            return HttpResponse::NotFound().json(
-                serde_json::json!({"error": "Order not found"})
-            );
-        },
+            return HttpResponse::NotFound().json(serde_json::json!({"error": "Order not found"}));
+        }
         Err(e) => {
-            return HttpResponse::InternalServerError().json(
-                serde_json::json!({"error": format!("DB Error: {}", e)})
-            );
+            return HttpResponse::InternalServerError()
+                .json(serde_json::json!({"error": format!("DB Error: {}", e)}));
         }
     }
 }
@@ -257,26 +244,22 @@ pub async fn update_status(
 
 #[delete("/orders/{id}/{user_id}")]
 pub async fn delete_order(
-    redis_pub: web::Data<RedisPublisher>,
+    _redis_pub: web::Data<RedisPublisher>,
     pool: web::Data<PgPool>,
-    path: web::Path<(Uuid, Uuid)>
+    path: web::Path<(Uuid, Uuid)>,
 ) -> HttpResponse {
     let (order_id, user_id) = path.into_inner();
-    let result = sqlx::query!(
-        r#"
-            DELETE FROM orders WHERE id = $1 AND user_id = $2
-        "#,
-        order_id,
-        user_id
-    )
-    .execute(pool.get_ref())
-    .await;
+    let result = sqlx::query("DELETE FROM orders WHERE id = $1 AND user_id = $2")
+        .bind(order_id)
+        .bind(user_id)
+        .execute(pool.get_ref())
+        .await;
 
     match result {
         Ok(row) if row.rows_affected() > 0 => {
             // redis_pub.publish("order.deleted", &event).await.unwrap();
             HttpResponse::Ok().body("Order deleted successfully")
-        },
+        }
         Ok(_) => HttpResponse::NotFound().body("Not found"),
         Err(e) => {
             eprintln!("DB error deleting order: {:?}", e);
