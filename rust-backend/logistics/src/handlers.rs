@@ -51,6 +51,23 @@ pub async fn get_shipment(repo: web::Data<LogisticsRepo>, path: web::Path<Uuid>)
 }
 
 /// Returns supplier shipments using filter and pagination query fields.
+/// List shipments for a supplier using filter and pagination query parameters.
+///
+/// Returns an HTTP response: `200 OK` with the matching shipments as JSON on success, or
+/// `500 Internal Server Error` with a `db error` message on repository failure.
+///
+/// # Examples
+///
+/// ```
+/// use actix_web::web;
+/// use uuid::Uuid;
+///
+/// // Construct a supplier id and query parameters (fill fields as appropriate).
+/// let supplier_id = Uuid::new_v4();
+/// let query = web::Query::from(ListShipmentQuery { /* set filter/pagination fields */ });
+/// // In an async test, call the handler with web::Path and web::Query wrappers:
+/// // let resp = list_supplier_shipments(repo_data, web::Path::from(supplier_id), query).await;
+/// ```
 pub async fn list_supplier_shipments(
     repo: web::Data<LogisticsRepo>,
     path: web::Path<Uuid>,

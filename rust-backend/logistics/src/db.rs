@@ -88,6 +88,30 @@ impl LogisticsRepo {
     }
 
     /// Updates shipment status and publishes logistics.shipment_updated.
+    /// Update a shipment's status, setting dispatched_at when transitioning to `Intransit`
+    /// and delivered_at when transitioning to `Delivered`, and return the updated shipment.
+    ///
+    /// # Errors
+    ///
+    /// Returns an `sqlx::Error::Protocol` if the requested status transition is not allowed.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use uuid::Uuid;
+    /// # use chrono::Utc;
+    /// # use logistics::db::LogisticsRepo;
+    /// # use logistics::models::{UpdateShipmentStatusRequest, ShipmentStatus};
+    /// # async fn _example(repo: &LogisticsRepo) -> Result<(), sqlx::Error> {
+    /// let req = UpdateShipmentStatusRequest {
+    ///     status: ShipmentStatus::Intransit,
+    ///     notes: Some("Out for delivery".into()),
+    /// };
+    /// let updated = repo.update_status(Uuid::nil(), &req).await?;
+    /// assert_eq!(updated.status, ShipmentStatus::Intransit);
+    /// # Ok(())
+    /// # }
+    /// ```
     pub async fn update_status(
         &self,
         shipment_id: Uuid,
@@ -139,6 +163,21 @@ impl LogisticsRepo {
     }
 
     /// Cancels the shipment for an order when cancellation is allowed.
+    /// Cancels the shipment for the given order if the shipment has not been delivered.
+    ///
+    /// If the shipment's current status is `delivered`, no update occurs and the query will not return a row.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # use uuid::Uuid;
+    /// # async fn run(repo: &crate::db::LogisticsRepo) -> Result<(), sqlx::Error> {
+    /// let order_id = Uuid::new_v4();
+    /// let shipment = repo.cancel_by_order_id(order_id).await?;
+    /// assert_eq!(shipment.order_id, order_id);
+    /// # Ok(())
+    /// # }
+    /// ```
     pub async fn cancel_by_order_id(&self, order_id: Uuid) -> Result<Shipment, sqlx::Error> {
         sqlx::query_as::<_, Shipment>(
             r#"
