@@ -14,38 +14,7 @@ use std::collections::HashMap;
 use std::env;
 use uuid::Uuid;
 
-/// Creates a new product and publishes best-effort "product.created" integration events.
-///
-/// On success responds with HTTP 201 Created containing the newly created product JSON. If the repository
-/// operation fails, responds with HTTP 500 Internal Server Error.
-///
-/// # Examples
-///
-/// ```no_run
-/// use actix_web::{test, web, App, http::StatusCode};
-/// use uuid::Uuid;
-/// use product_catalog::{handlers::create_product, repos::ProductRepo, models::CreateProductRequest};
-///
-/// # async fn example() {
-/// // Set up test app with a ProductRepo and Redis publisher wired in (omitted).
-/// // Build a CreateProductRequest and call the handler, expecting Created.
-/// let req = CreateProductRequest {
-///     supplier_id: Uuid::new_v4(),
-///     name: "Example".into(),
-///     description: None,
-///     price: 100,
-///     category: "tools".into(),
-///     quantity: 10,
-///     low_stock_threshold: 1,
-///     unit: "pcs".into(),
-///     ..Default::default()
-/// };
-///
-/// // Sending the request to the handler should yield 201 Created on success.
-/// // let resp = test::call_service(&app, TestRequest::post().set_json(&req).to_request()).await;
-/// // assert_eq!(resp.status(), StatusCode::CREATED);
-/// # }
-/// ```
+/// Creates a product and emits best-effort integration events.
 pub async fn create_product(
     repo: web::Data<ProductRepo>,
     redis_pub: web::Data<RedisPublisher>,
@@ -83,23 +52,7 @@ pub async fn create_product(
     }
 }
 
-/// Fetches all products for the given supplier and emits a `product.viewed` event for each item.
-///
-/// On success returns the list of products belonging to the supplier. For every returned product a
-/// `product.viewed` event is published to the configured Redis publisher; publish failures are
-/// logged but do not affect the HTTP response.
-///
-/// # Examples
-///
-/// ```no_run
-/// use actix_web::web;
-/// use uuid::Uuid;
-///
-/// // assuming `repo` and `redis_pub` are previously constructed `web::Data` instances
-/// let supplier_id = Uuid::new_v4();
-/// // call the handler (within an async context / test runtime)
-/// // let resp = get_products_for_supplier(repo, redis_pub, web::Path::from(supplier_id)).await;
-/// ```
+/// Returns all products for a supplier and emits view events.
 pub async fn get_products_for_supplier(
     repo: web::Data<ProductRepo>,
     redis_pub: web::Data<RedisPublisher>,
@@ -137,21 +90,7 @@ pub async fn get_products_for_supplier(
     }
 }
 
-/// Fetches a product by supplier and product ID and returns an HTTP response with the result.
-///
-/// On success returns `200 OK` with the product serialized as JSON. Returns `404 Not Found` if the
-/// product does not exist, and `500 Internal Server Error` on database errors.
-///
-/// # Examples
-///
-/// ```no_run
-/// use actix_web::web;
-/// use uuid::Uuid;
-///
-/// // Given an initialized `repo: web::Data<ProductRepo>` and valid UUIDs:
-/// let path = web::Path::from((Uuid::new_v4(), Uuid::new_v4()));
-/// let resp = get_single_product(repo, path).await;
-/// ```
+/// Returns a single product by supplier and product id.
 pub async fn get_single_product(
     repo: web::Data<ProductRepo>,
     path: web::Path<(Uuid, Uuid)>,
@@ -167,36 +106,7 @@ pub async fn get_single_product(
     }
 }
 
-/// Updates the specified product and emits a `product.updated` event for downstream consumers.
-///
-/// On success returns the updated product as the HTTP response body. If the product is not found,
-/// responds with 404 Not Found. Database errors produce a 500 Internal Server Error.
-///
-/// # Examples
-///
-/// ```no_run
-/// use actix_web::{test, web, App};
-/// use uuid::Uuid;
-///
-/// // Build an HTTP request to the handler (details such as repo and redis publisher setup are omitted).
-/// // This example demonstrates the request shape; handler wiring is environment-specific.
-/// let supplier_id = Uuid::new_v4();
-/// let product_id = Uuid::new_v4();
-/// let req_body = serde_json::json!({
-///     "name": "Updated name",
-///     "price": 19.99,
-///     "quantity_change": 5
-/// });
-///
-/// // Example test flow (pseudo):
-/// // let app = test::init_service(App::new().route(...)).await;
-/// // let req = test::TestRequest::put()
-/// //     .uri(&format!("/suppliers/{}/products/{}", supplier_id, product_id))
-/// //     .set_json(&req_body)
-/// //     .to_request();
-/// // let resp = test::call_service(&app, req).await;
-/// // assert!(resp.status().is_success());
-/// ```
+/// Updates a product and emits a product.updated event.
 pub async fn update_product(
     repo: web::Data<ProductRepo>,
     redis_pub: web::Data<RedisPublisher>,
@@ -280,34 +190,7 @@ pub async fn delete_product(
     }
 }
 
-/// Searches for products using optional query parameters.
-///
-/// Supported query parameters:
-/// - `category`: product category to filter by.
-/// - `min_price`, `max_price`: price range (parsed as floating point).
-/// - `supplier_id`, `product_id`: UUIDs to filter by.
-/// - `limit`: number of results to return (defaults to 50, clamped to 1..=200).
-/// - `offset`: result offset (defaults to 0, minimum 0).
-///
-/// Returns an HTTP 200 response with the matching product rows on success,
-/// or an HTTP 500 response with body "Search error" if the repository call fails.
-///
-/// # Examples
-///
-/// ```no_run
-/// use actix_web::web;
-/// use std::collections::HashMap;
-///
-/// // Build query parameters as they would come from a request.
-/// let mut params = HashMap::new();
-/// params.insert("category".to_string(), "tools".to_string());
-/// params.insert("limit".to_string(), "10".to_string());
-///
-/// let query: web::Query<HashMap<String, String>> = web::Query::from(params);
-///
-/// // `repo` would be provided by the Actix application state in real usage.
-/// // let response = search_products(repo, query).await;
-/// ```
+/// Searches products by optional query parameters.
 pub async fn search_products(
     repo: web::Data<ProductRepo>,
     query: web::Query<HashMap<String, String>>,
