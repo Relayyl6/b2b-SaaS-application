@@ -155,6 +155,7 @@ pub async fn update_product(
     }
 }
 
+/// Deletes a product, emits product.deleted, and invalidates cache.
 pub async fn delete_product(
     repo: web::Data<ProductRepo>,
     redis_pub: web::Data<RedisPublisher>,
@@ -271,6 +272,7 @@ pub async fn bulk_create(
     }
 }
 
+/// Stores uploaded asset metadata for a product.
 pub async fn register_product_asset(
     repo: web::Data<ProductRepo>,
     path: web::Path<(Uuid, Uuid)>,
@@ -290,6 +292,19 @@ pub async fn register_product_asset(
     }
 }
 
+/// Get metadata for all assets attached to the specified product.
+///
+/// # Examples
+///
+/// ```ignore
+/// use actix_web::web;
+/// use uuid::Uuid;
+///
+/// // `repo` is a `web::Data<ProductRepo>` prepared in test setup.
+/// let supplier_id = Uuid::new_v4();
+/// let product_id = Uuid::new_v4();
+/// let response = list_product_assets(repo, web::Path::from((supplier_id, product_id))).await;
+/// ```
 pub async fn list_product_assets(
     repo: web::Data<ProductRepo>,
     path: web::Path<(Uuid, Uuid)>,
@@ -304,6 +319,25 @@ pub async fn list_product_assets(
     }
 }
 
+/// Deletes the metadata record for a product asset identified by supplier, product, and asset IDs.
+///
+/// Returns HTTP 200 OK with "Asset deleted" when a row was removed, HTTP 404 Not Found with "Asset not found" when there was no matching record, and HTTP 500 Internal Server Error if the repository operation fails.
+///
+/// # Examples
+///
+/// ```no_run
+/// use actix_web::web;
+/// use uuid::Uuid;
+///
+/// // Assume `repo` is a `web::Data<ProductRepo>` already initialized.
+/// let supplier_id = Uuid::new_v4();
+/// let product_id = Uuid::new_v4();
+/// let asset_id = Uuid::new_v4();
+/// let path = web::Path::from((supplier_id, product_id, asset_id));
+///
+/// // Call the handler in an async context:
+/// // let resp = delete_product_asset(repo.clone(), path).await;
+/// ```
 pub async fn delete_product_asset(
     repo: web::Data<ProductRepo>,
     path: web::Path<(Uuid, Uuid, Uuid)>,
@@ -322,6 +356,20 @@ pub async fn delete_product_asset(
     }
 }
 
+/// Generates signed Cloudinary upload parameters for direct client uploads.
+///
+/// Reads Cloudinary credentials from the environment and returns a JSON payload containing
+/// the `cloud_name`, `api_key`, `timestamp`, `signature`, `folder`, and optional `public_id`.
+/// If any required environment variable is missing, responds with HTTP 503 and a short error message.
+///
+/// # Examples
+///
+/// ```
+/// // Construct a request and call the handler (async context required).
+/// let req = SignAssetUploadRequest { folder: None, public_id: None };
+/// let resp = actix_rt::System::new().block_on(async { sign_cloudinary_upload(web::Json(req)).await });
+/// // `resp` is an HTTP response whose JSON body is `SignedUploadResponse`.
+/// ```
 pub async fn sign_cloudinary_upload(req: web::Json<SignAssetUploadRequest>) -> impl Responder {
     let cloud_name = match env::var("CLOUDINARY_CLOUD_NAME") {
         Ok(v) => v,
