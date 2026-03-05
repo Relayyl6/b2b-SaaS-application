@@ -28,6 +28,10 @@ impl RedisPublisher {
         message: &T,
     ) -> Result<(), RedisError> {
         if !self.enabled {
+            eprintln!(
+                "🟡 RedisPublisher disabled — skipping publish for channel '{}'",
+                channel
+            );
             return Ok(());
         }
 
