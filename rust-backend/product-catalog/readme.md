@@ -280,3 +280,19 @@ We welcome contributions to improve the Product Catalog service! Here’s how yo
 
 ---
 
+
+### Asset/Image Upload Workflow (Cloudinary-ready)
+
+The service now supports a scalable product asset workflow for listing images:
+
+1. Request signed upload params from backend:
+   - `POST /assets/cloudinary/sign-upload`
+2. Upload asset directly from client to Cloudinary using signed params.
+3. Register uploaded image metadata against a product:
+   - `POST /products/{supplier_id}/{product_id}/assets`
+4. Read/delete product assets:
+   - `GET /products/{supplier_id}/{product_id}/assets`
+   - `DELETE /products/{supplier_id}/{product_id}/assets/{asset_id}`
+
+This keeps heavy file transfer out of the API service and stores only metadata in Postgres.
+

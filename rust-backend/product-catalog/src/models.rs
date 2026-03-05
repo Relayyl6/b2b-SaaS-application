@@ -1,7 +1,7 @@
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
 use uuid::Uuid;
-use chrono::{DateTime, Utc};
 
 #[derive(Debug, Serialize, Deserialize, FromRow)]
 pub struct Product {
@@ -19,6 +19,25 @@ pub struct Product {
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
+
+#[derive(Debug, Serialize, Deserialize, FromRow)]
+pub struct ProductAsset {
+    pub id: Uuid,
+    pub product_id: Uuid,
+    pub supplier_id: Uuid,
+    pub provider: String,
+    pub public_id: String,
+    pub url: String,
+    pub secure_url: String,
+    pub width: Option<i32>,
+    pub height: Option<i32>,
+    pub bytes: Option<i64>,
+    pub format: Option<String>,
+    pub alt_text: Option<String>,
+    pub is_primary: bool,
+    pub created_at: DateTime<Utc>,
+}
+
 #[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 pub struct CreateProductRequest {
@@ -54,6 +73,36 @@ pub struct BulkCreateRequest {
     pub products: Vec<CreateProductRequest>,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct RegisterProductAssetRequest {
+    pub provider: Option<String>,
+    pub public_id: String,
+    pub url: String,
+    pub secure_url: String,
+    pub width: Option<i32>,
+    pub height: Option<i32>,
+    pub bytes: Option<i64>,
+    pub format: Option<String>,
+    pub alt_text: Option<String>,
+    pub is_primary: Option<bool>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct SignAssetUploadRequest {
+    pub folder: Option<String>,
+    pub public_id: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct SignedUploadResponse {
+    pub cloud_name: String,
+    pub api_key: String,
+    pub timestamp: i64,
+    pub signature: String,
+    pub folder: String,
+    pub public_id: Option<String>,
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]
 pub struct ProductEvent {
     pub event_type: String,
@@ -73,6 +122,5 @@ pub struct ProductEvent {
     pub reservation_id: Option<Uuid>,
     pub timestamp: Option<DateTime<Utc>>,
     pub expires_at: Option<DateTime<Utc>>,
-    pub user_id: Option<Uuid>
-    // pub status: OrderStatus,
+    pub user_id: Option<Uuid>, // pub status: OrderStatus,
 }

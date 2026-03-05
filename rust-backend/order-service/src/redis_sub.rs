@@ -1,128 +1,145 @@
 // src/redis_sub.rs
-// Listens for product events on Redis and hands them off to local event handlers.
+// Listens for inventory/logistics events on Redis and updates order state.
 
+use crate::models::{OrderEvent, OrderStatus};
+use futures_util::StreamExt;
+use redis::{aio::Connection, Client};
+use serde_json::Value;
 use sqlx::PgPool;
-
 use std::env;
-use redis::{Client, aio::Connection};
-use crate::models::OrderEvent;
-use serde_json;
-use tokio;
 
 mod events;
-use futures_util::StreamExt;
-
-use events::{update_order_failed_event, update_order_confirmed_event, update_order_cancelled_event, update_order_shipped_event, update_order_delivered_event};
+use events::{
+    update_order_cancelled_event, update_order_confirmed_event, update_order_delivered_event,
+    update_order_failed_event, update_order_shipped_event,
+};
 
 #[allow(deprecated)]
 pub async fn listen_to_redis_events(pool: PgPool) -> Result<(), Box<dyn std::error::Error>> {
     let redis_url = env::var("REDIS_URL").map_err(|_| "REDIS_URL must be set in environment")?;
 
-    // Main loop: wait for messages and handle each one.
     loop {
-        println!("🔄 Connecting to Redis...");
         let client = Client::open(redis_url.as_str())?;
 
         let conn: Connection = match client.get_async_connection().await {
-                Ok(c) => c,
-                Err(e) => {
-                    eprintln!("❌ Failed to connect to Redis: {:?}", e);
-                    tokio::time::sleep(std::time::Duration::from_secs(5)).await;
-                    continue;
-                }
-            };
+            Ok(c) => c,
+            Err(e) => {
+                eprintln!("❌ Failed to connect to Redis: {:?}", e);
+                tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                continue;
+            }
+        };
         let mut pubsub = conn.into_pubsub();
 
-// Analogous events
-// "inventory.expired", "order.failed", "inventory.rejected"
-// "inventory.reserved", "order.confirmed"
-// "inventory.released", "order.cancelled"
-// "inventory.finalized", "order.shipped"
-// "payment.success", "order.delivered"
-
-// last one order.arrived
-
-
-
-        // Subscribe to all product channels in one go
-        for channel in &["inventory.rejected", "inventory.reservation_expired", "inventory.reserved", "inventory.expired", "inventory.released", "inventory.finalized", "order.delivered"] {
+        for channel in [
+            "inventory.rejected",
+            "inventory.reservation_expired",
+            "inventory.reserved",
+            "inventory.expired",
+            "inventory.released",
+            "inventory.finalized",
+            "order.delivered",
+            "logistics.shipment_updated",
+            "logistics.shipment_cancelled",
+        ] {
             if let Err(e) = pubsub.subscribe(channel).await {
                 eprintln!("❌ Failed to subscribe to {}: {:?}", channel, e);
-                // wait before retrying subscription
                 tokio::time::sleep(std::time::Duration::from_secs(5)).await;
                 continue;
             }
         }
-        
-        println!("📡 Subscribed to all order events");
 
         let mut stream = pubsub.on_message();
 
         while let Some(msg) = stream.next().await {
+            let channel = msg.get_channel_name().to_string();
             let payload: String = match msg.get_payload() {
                 Ok(p) => p,
                 Err(e) => {
                     eprintln!("Failed to get payload from message: {:?}", e);
-                    // skip this message and continue listening
                     continue;
                 }
             };
 
+            if channel.starts_with("logistics.") {
+                if let Err(e) = handle_logistics_event(&pool, &channel, &payload).await {
+                    eprintln!("Failed handling logistics event: {e}");
+                }
+                continue;
+            }
 
-            let parsed: Result<OrderEvent, _> = serde_json::from_str(&payload);
-
-            let event = match parsed {
+            let event: OrderEvent = match serde_json::from_str(&payload) {
                 Ok(ev) => ev,
                 Err(e) => {
-                    eprintln!("Failed to parse OrderEvent JSON: {} -- payload: {}", e, payload);
+                    eprintln!(
+                        "Failed to parse OrderEvent JSON: {} -- payload: {}",
+                        e, payload
+                    );
                     continue;
                 }
             };
 
-            match event.event_type.as_str() {
-                "inventory.rejected" => { //  "order.failed" 
-                    if let Err(e) = update_order_failed_event(&pool, event.clone()).await {
-                        eprintln!("Error handling product.created: {:?}", e);
-                    }
+            match channel.as_str() {
+                "inventory.rejected" => {
+                    let _ = update_order_failed_event(&pool, event.clone()).await;
                 }
-                "inventory.reservation_expired" => {  // "order.cancelled" 
-                    if let Err(e) = update_order_cancelled_event(&pool, event.clone()).await {
-                        eprintln!("Error handling product.created: {:?}", e);
-                    }
+                "inventory.reservation_expired" | "inventory.expired" | "inventory.released" => {
+                    let _ = update_order_cancelled_event(&pool, event.clone()).await;
                 }
-                "inventory.reserved" => { //  "order.confirmed" 
-                    if let Err(e) = update_order_confirmed_event(&pool, event.clone()).await {
-                        eprintln!("Error handling product.updated: {:?}", e);
-                    }
+                "inventory.reserved" => {
+                    let _ = update_order_confirmed_event(&pool, event.clone()).await;
                 }
-                "inventory.expired" => { //  "order.cancelled" 
-                    if let Err(e) = update_order_cancelled_event(&pool, event.clone()).await {
-                        eprintln!("Error handling product.deleted: {:?}", e);
-                    }
-                }
-                "inventory.released" => { //  "order.cancelled" 
-                    if let Err(e) = update_order_cancelled_event(&pool, event.clone()).await {
-                        eprintln!("Error handling product.deleted: {:?}", e);
-                    }
-                }
-                "inventory.finalized" => { //  "order.shipped" 
-                    if let Err(e) = update_order_shipped_event(&pool, event.clone()).await {
-                        println!("Error handling order.created: {:?}", e);
-                    }
+                "inventory.finalized" => {
+                    let _ = update_order_shipped_event(&pool, event.clone()).await;
                 }
                 "order.delivered" => {
-                    if let Err(e) = update_order_delivered_event(&pool, event.clone()).await {
-                        println!("Error handling order.cancelled: {:?}", e);
-                    }
+                    let _ = update_order_delivered_event(&pool, event.clone()).await;
                 }
-                other => {
-                    // Unknown event type — log and continue.
-                    eprintln!("Received unexpected product event type: {}", other);
-                }
+                other => eprintln!("Received unexpected event type: {}", other),
             }
         }
 
-        eprintln!("⚠️ Redis stream closed — reconnecting in 5 seconds...");
         tokio::time::sleep(std::time::Duration::from_secs(5)).await;
     }
+}
+
+async fn handle_logistics_event(
+    pool: &PgPool,
+    channel: &str,
+    payload: &str,
+) -> Result<(), sqlx::Error> {
+    let value: Value = match serde_json::from_str(payload) {
+        Ok(v) => v,
+        Err(_) => return Ok(()),
+    };
+
+    let order_id = value
+        .get("order_id")
+        .and_then(|v| v.as_str())
+        .and_then(|v| uuid::Uuid::parse_str(v).ok());
+
+    let Some(order_id) = order_id else {
+        return Ok(());
+    };
+
+    let status = match channel {
+        "logistics.shipment_cancelled" => Some(OrderStatus::Cancelled),
+        "logistics.shipment_updated" => match value.get("status").and_then(|v| v.as_str()) {
+            Some("intransit") => Some(OrderStatus::Shipped),
+            Some("delivered") => Some(OrderStatus::Delivered),
+            Some("cancelled") => Some(OrderStatus::Cancelled),
+            _ => None,
+        },
+        _ => None,
+    };
+
+    if let Some(status) = status {
+        sqlx::query("UPDATE orders SET status = $1, updated_at = NOW() WHERE id = $2")
+            .bind(status)
+            .bind(order_id)
+            .execute(pool)
+            .await?;
+    }
+
+    Ok(())
 }
