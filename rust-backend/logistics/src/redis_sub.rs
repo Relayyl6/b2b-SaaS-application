@@ -7,38 +7,14 @@ use std::env;
 use crate::db::LogisticsRepo;
 use crate::models::{CreateShipmentRequest, IncomingOrderEvent, LogisticsEvent, ShipmentStatus};
 use crate::publisher::RedisPublisher;
+use crate::rabbit_pub::RabbitPublisher;
 
-/// Listens to Redis pub/sub channels and applies logistics side effects by creating or cancelling shipments.
-///
-/// This function continuously connects to Redis (configured via the `REDIS_URL` environment variable),
-/// subscribes to the `inventory.reserved` and `order.cancelled` channels, processes incoming messages as
-/// `IncomingOrderEvent`, performs repository operations via the provided `LogisticsRepo`, and publishes outbound
-/// `LogisticsEvent`s via the provided `RedisPublisher`.
-///
-/// Behaviour summary:
-/// - Requires `REDIS_URL` to be set in the environment; returns an error if it is missing.
-/// - On `inventory.reserved`: if `order_id` and `user_id` are present and no shipment exists for the order,
-///   creates a shipment and publishes a `logistics.shipment_created` event.
-/// - On `order.cancelled`: if `order_id` is present, cancels the shipment by order ID and publishes a
-///   `logistics.shipment_cancelled` event. A "row not found" cancellation is treated as a no-op.
-///
-/// # Examples
-///
-/// ```no_run
-/// use actix_web::web::Data;
-///
-/// // Provided `repo` and `redis_pub` should be initialized application singletons.
-/// // tokio::spawn can be used to run the listener in the background.
-/// # async fn example(repo: Data<crate::LogisticsRepo>, redis_pub: Data<crate::RedisPublisher>) {
-/// tokio::spawn(async move {
-///     let _ = crate::listen_to_redis_events(repo, redis_pub).await;
-/// });
-/// # }
-/// ```
 #[allow(deprecated)]
+/// Consumes Redis pub/sub events and applies logistics side effects.
 pub async fn listen_to_redis_events(
     repo: Data<LogisticsRepo>,
     redis_pub: Data<RedisPublisher>,
+    rabbit_pub: Data<RabbitPublisher>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let redis_url = env::var("REDIS_URL").map_err(|_| "REDIS_URL must be set in environment")?;
 
@@ -126,12 +102,8 @@ pub async fn listen_to_redis_events(
                             timestamp: Utc::now(),
                         };
 
-                        if let Err(e) = redis_pub
-                            .publish("logistics.shipment_created", &outbound)
-                            .await
-                        {
-                            eprintln!("Failed publishing logistics.shipment_created event: {e:?}");
-                        }
+                        redis_pub.publish_async("logistics.shipment_created", outbound.clone());
+                        rabbit_pub.publish_async(outbound.clone());
                     }
                 }
                 "order.cancelled" => {
@@ -150,12 +122,11 @@ pub async fn listen_to_redis_events(
                                     timestamp: Utc::now(),
                                 };
 
-                                if let Err(e) = redis_pub
-                                    .publish("logistics.shipment_cancelled", &outbound)
-                                    .await
-                                {
-                                    eprintln!("Failed publishing logistics.shipment_cancelled event: {e:?}");
-                                }
+                                redis_pub.publish_async(
+                                    "logistics.shipment_cancelled",
+                                    outbound.clone(),
+                                );
+                                rabbit_pub.publish_async(outbound.clone());
                             }
                             Err(sqlx::Error::RowNotFound) => {}
                             Err(e) => eprintln!("Failed to cancel shipment by order id: {e:?}"),

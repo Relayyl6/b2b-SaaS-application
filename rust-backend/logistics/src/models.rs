@@ -13,23 +13,7 @@ pub enum ShipmentStatus {
 }
 
 impl ShipmentStatus {
-    /// Returns whether this status may transition to `next` according to the domain rules.
-    ///
-    /// # Returns
-    ///
-    /// `true` if the current status is the same as `next` or if moving from the current status
-    /// to `next` is allowed (Pending -> Intransit, Pending -> Cancelled, Intransit -> Delivered,
-    /// Intransit -> Cancelled), `false` otherwise.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use crate::models::ShipmentStatus;
-    ///
-    /// assert!(ShipmentStatus::Pending.can_transition_to(&ShipmentStatus::Intransit));
-    /// assert!(ShipmentStatus::Intransit.can_transition_to(&ShipmentStatus::Delivered));
-    /// assert!(!ShipmentStatus::Delivered.can_transition_to(&ShipmentStatus::Pending));
-    /// ```
+    /// Checks whether a shipment status transition is valid.
     pub fn can_transition_to(&self, next: &ShipmentStatus) -> bool {
         match (self, next) {
             (ShipmentStatus::Pending, ShipmentStatus::Intransit)
@@ -100,4 +84,17 @@ pub struct IncomingOrderEvent {
     pub user_id: Option<Uuid>,
     pub supplier_id: Uuid,
     pub product_id: Uuid,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ShipmentStatus;
+
+    #[test]
+    fn validates_state_transitions() {
+        assert!(ShipmentStatus::Pending.can_transition_to(&ShipmentStatus::Intransit));
+        assert!(ShipmentStatus::Intransit.can_transition_to(&ShipmentStatus::Delivered));
+        assert!(!ShipmentStatus::Delivered.can_transition_to(&ShipmentStatus::Pending));
+        assert!(!ShipmentStatus::Cancelled.can_transition_to(&ShipmentStatus::Intransit));
+    }
 }

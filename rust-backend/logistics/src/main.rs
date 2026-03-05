@@ -2,6 +2,7 @@ mod db;
 mod handlers;
 mod models;
 mod publisher;
+mod rabbit_pub;
 mod redis_sub;
 
 use actix_web::{web, App, HttpServer};
@@ -10,6 +11,10 @@ use redis::Client;
 use sqlx::postgres::PgPoolOptions;
 use std::env;
 use tokio::spawn;
+
+use crate::publisher::RedisPublisher;
+use crate::rabbit_pub::RabbitPublisher;
+use crate::redis_sub::listen_to_redis_events;
 
 use crate::publisher::RedisPublisher;
 use crate::redis_sub::listen_to_redis_events;
@@ -34,7 +39,7 @@ use crate::redis_sub::listen_to_redis_events;
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
     dotenv().ok();
-    env_logger::init();
+    tracing_subscriber::fmt::init();
 
     let db_url = env::var("DATABASE_URL").expect("DATABASE_URL not set");
     let redis_url = env::var("REDIS_URL");
@@ -61,6 +66,8 @@ async fn main() -> std::io::Result<()> {
             .expect("redis client"),
     );
 
+    let rabbit_pub = web::Data::new(RabbitPublisher);
+
     let redis_pub = match redis_url.clone() {
         Ok(url) => {
             match RedisPublisher::new(&url).await {
@@ -76,9 +83,12 @@ async fn main() -> std::io::Result<()> {
 
     let repo_clone = repo.clone();
     let redis_pub_clone = redis_pub.clone();
+    let rabbit_pub_clone = rabbit_pub.clone();
     if redis_url.is_ok() {
         spawn(async move {
-            if let Err(e) = listen_to_redis_events(repo_clone, redis_pub_clone).await {
+            if let Err(e) =
+                listen_to_redis_events(repo_clone, redis_pub_clone, rabbit_pub_clone).await
+            {
                 eprintln!("redis listener stopped: {e}");
             }
         });
@@ -88,6 +98,7 @@ async fn main() -> std::io::Result<()> {
         App::new()
             .app_data(repo.clone())
             .app_data(redis_pub.clone())
+            .app_data(rabbit_pub.clone())
             .app_data(redis_client.clone())
             .route("/shipments", web::post().to(handlers::create_shipment))
             .route(

@@ -14,35 +14,7 @@ pub enum PublishError {
     Rabbit(#[from] lapin::Error),
 }
 
-/// Publishes a ProductEvent to the "analytics_events_topic" RabbitMQ exchange using the event's `event_type` as the routing key.
-///
-/// The function loads AMQP configuration from the `AMQP_ADDR` environment variable (defaults to
-/// `amqps://guest:guest@127.0.0.1:5671/%2f`), establishes a connection and channel, enables publisher
-/// confirms, declares the `analytics_events_topic` exchange (topic), serializes the event to JSON,
-/// publishes the message with delivery mode 2 (persistent), and awaits broker confirmation.
-///
-/// # Parameters
-/// - `ev`: The ProductEvent to publish; its `event_type` field is used as the routing key.
-///
-/// # Errors
-/// Returns `PublishError::Json` if serialization to JSON fails, or `PublishError::Rabbit` for connection,
-/// channel, exchange declaration, publish, or confirm-related failures.
-///
-/// # Examples
-///
-/// ```
-/// # use crate::models::ProductEvent;
-/// # use crate::publisher::publish_example_event;
-/// # // The example below assumes a running RabbitMQ instance and appropriate crate layout.
-/// # tokio_test::block_on(async {
-/// let ev = ProductEvent {
-///     event_type: "product.created".into(),
-///     ..Default::default()
-/// };
-/// let result = publish_example_event(&ev).await;
-/// assert!(result.is_ok());
-/// # });
-/// ```
+/// Publishes a product event message to RabbitMQ.
 pub async fn publish_example_event(ev: &ProductEvent) -> Result<(), PublishError> {
     println!("[DEBUG] Starting publish_example_event_to_rabbitMQ");
 
