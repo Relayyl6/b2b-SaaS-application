@@ -19,6 +19,24 @@ impl RedisPublisher {
         })
     }
 
+    /// Publishes a JSON-serialized message to a Redis channel, retrying on transient failures.
+    ///
+    /// If the publisher is disabled, this method does nothing and returns `Ok(())`.
+    /// On serialization failure the error is converted into a `RedisError` with kind `TypeError`.
+    /// The method will attempt to publish up to 5 times, waiting 2 seconds between attempts; if publishing still fails after the final attempt the last error is returned.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use crate::RedisPublisher;
+    /// #
+    /// #[tokio::test]
+    /// async fn publish_noop_example() {
+    ///     let publisher = RedisPublisher::new_noop();
+    ///     // new_noop() creates a disabled publisher; publish is a no-op and returns Ok(())
+    ///     publisher.publish("my-channel", &"hello").await.unwrap();
+    /// }
+    /// ```
     pub async fn publish<T: serde::Serialize>(
         &self,
         channel: &str,

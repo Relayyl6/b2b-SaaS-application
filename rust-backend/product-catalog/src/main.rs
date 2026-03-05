@@ -12,6 +12,31 @@ use redis::Client as RedisClient;
 use sqlx::PgPool;
 use std::env;
 
+/// Starts the Product Catalog HTTP server after loading configuration, initializing logging,
+/// connecting to Postgres and running migrations, and configuring Redis publisher/client
+/// (falling back to a no-op publisher if Redis is unavailable).
+///
+/// Reads configuration from environment variables:
+/// - `DATABASE_URL` (required)
+/// - `REDIS_URL` (optional)
+/// - `SERVICE_PORT` (defaults to `3003`)
+///
+/// The server registers all product- and asset-related routes and binds to `0.0.0.0:{SERVICE_PORT}`.
+///
+/// # Examples
+///
+/// ```no_run
+/// // Requires a running Postgres instance and a DATABASE_URL environment variable.
+/// std::env::set_var("DATABASE_URL", "postgres://user:pass@localhost/product_catalog");
+/// // Optionally:
+/// // std::env::set_var("REDIS_URL", "redis://127.0.0.1:6379");
+/// // Start the service (runs until stopped)
+/// tokio::runtime::Runtime::new().unwrap().block_on(async { main().await.unwrap() });
+/// ```
+///
+/// # Returns
+///
+/// `Ok(())` if the server runs and exits without I/O errors, `Err` if binding or runtime I/O fails.
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
     dotenv().ok();
