@@ -10,20 +10,7 @@ pub struct RedisPublisher {
 }
 
 impl RedisPublisher {
-    /// Creates a RedisPublisher configured with the given Redis URL.
-    ///
-    /// On success the returned publisher is enabled; on failure returns the `RedisError` produced
-    /// when creating the Redis client.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// #[tokio::test]
-    /// async fn create_publisher() {
-    ///     let res = RedisPublisher::new("redis://127.0.0.1/").await;
-    ///     assert!(res.is_ok());
-    /// }
-    /// ```
+    /// Creates a new instance with the provided dependencies.
     pub async fn new(redis_url: &str) -> Result<Self, RedisError> {
         let client = Client::open(redis_url)?;
         Ok(Self {
@@ -97,20 +84,7 @@ impl RedisPublisher {
         }
     }
 
-    /// Constructs a disabled `RedisPublisher` that ignores publish calls.
-    ///
-    /// The publisher is created with `enabled = false`. It attempts to construct a Redis client
-    /// using the `REDIS_URL` environment variable and falls back to `redis://127.0.0.1/` if the
-    /// variable is unset or the client cannot be created.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// let pub_noop = RedisPublisher::new_noop();
-    /// // publish is a no-op and should return Ok(())
-    /// let res = pub_noop.publish("channel", &serde_json::json!({"k":"v"}));
-    /// assert!(res.is_ok());
-    /// ```
+    /// Creates a disabled publisher that drops publish calls.
     pub fn new_noop() -> Self {
         let redis_url = env::var("REDIS_URL").unwrap_or_else(|_| "redis://127.0.0.1/".to_string());
         let client =

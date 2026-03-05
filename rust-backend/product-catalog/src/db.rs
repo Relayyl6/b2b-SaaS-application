@@ -10,53 +10,12 @@ pub struct ProductRepo {
 }
 
 impl ProductRepo {
-    /// Creates a new ProductRepo using the provided PostgreSQL connection pool.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use sqlx::PgPool;
-    /// // create or obtain a PgPool (connect_lazy returns a pool without performing an async connect)
-    /// let pool = PgPool::connect_lazy("postgres://user:pass@localhost/db");
-    /// let repo = ProductRepo::new(pool);
-    /// ```
+    /// Creates a new instance with the provided dependencies.
     pub fn new(pool: PgPool) -> Self {
         Self { pool }
     }
 
-    /// Creates a new product and returns the inserted product row.
-    ///
-    /// Applies defaulting for missing fields: `available` defaults to `true`, `quantity` defaults to `0`,
-    /// `product_id` defaults to a newly generated UUID, and `low_stock_threshold` defaults to `10`.
-    ///
-    /// # Returns
-    ///
-    /// The newly created `Product` row as stored in the database.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// # use uuid::Uuid;
-    /// # use sqlx::PgPool;
-    /// # use product_catalog::{ProductRepo, CreateProductRequest};
-    /// # async fn example(pool: PgPool) -> Result<(), sqlx::Error> {
-    /// let repo = ProductRepo::new(pool);
-    /// let req = CreateProductRequest {
-    ///     supplier_id: Uuid::new_v4(),
-    ///     name: "Example".into(),
-    ///     description: None,
-    ///     category: None,
-    ///     price: 9.99,
-    ///     unit: "each".into(),
-    ///     product_id: None,
-    ///     quantity: None,
-    ///     available: None,
-    ///     low_stock_threshold: None,
-    /// };
-    /// let product = repo.create_product(&req).await?;
-    /// assert_eq!(product.name, "Example");
-    /// # Ok(()) }
-    /// ```
+    /// Creates a product and emits best-effort integration events.
     pub async fn create_product(&self, req: &CreateProductRequest) -> Result<Product, sqlx::Error> {
         let available = req.available.unwrap_or(true);
         let quantity = req.quantity.unwrap_or(0);
@@ -114,20 +73,7 @@ impl ProductRepo {
         .await
     }
 
-    /// Fetches the product matching the given supplier and product IDs.
-    ///
-    /// Returns the matching `Product` row if one exists for the provided `supplier_id` and `product_id`.
-    ///
-    /// # Examples
-    ///
-    /// ```ignore
-    /// # // requires a running async runtime and a `ProductRepo` instance named `repo`
-    /// # use uuid::Uuid;
-    /// let supplier_id = Uuid::parse_str("11111111-2222-3333-4444-555555555555").unwrap();
-    /// let product_id = Uuid::parse_str("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee").unwrap();
-    /// let product = repo.get_one(supplier_id, product_id).await.unwrap();
-    /// assert_eq!(product.product_id, product_id);
-    /// ```
+    /// Returns a single product for a supplier/product pair.
     pub async fn get_one(
         &self,
         supplier_id: Uuid,
@@ -260,23 +206,7 @@ impl ProductRepo {
         Ok(result.rows_affected())
     }
 
-    /// Searches products applying optional filters and returns paginated results.
-    ///
-    /// Returns a vector of `Product` rows that match the provided filters, ordered by name.
-    /// Filters are ignored when passed as `None`.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// # tokio_test::block_on(async {
-    /// // `repo` is a `ProductRepo` connected to a test database.
-    /// let products = repo
-    ///     .search_products(None, None, None, None, None, 10, 0)
-    ///     .await
-    ///     .unwrap();
-    /// assert!(products.len() <= 10);
-    /// # });
-    /// ```
+    /// Searches products by optional query parameters.
     pub async fn search_products(
         &self,
         category: Option<String>,
