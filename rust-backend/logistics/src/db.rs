@@ -11,45 +11,12 @@ pub struct LogisticsRepo {
 }
 
 impl LogisticsRepo {
-    /// Creates a new LogisticsRepo using the provided Postgres connection pool.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// # use sqlx::PgPool;
-    /// # // `pool` is an existing PgPool
-    /// let repo = LogisticsRepo::new(&pool);
-    /// ```
+    /// Creates a new instance with the provided dependencies.
     pub fn new(pool: &PgPool) -> Self {
         Self { pool: pool.clone() }
     }
 
-    /// Creates a shipment record and emits a `logistics.shipment_created` event.
-    ///
-    /// On conflict by `order_id`, preserves existing `notes` when the incoming notes are null and updates `updated_at`.
-    ///
-    /// # Returns
-    ///
-    /// The created or upserted `Shipment`.
-    ///
-    /// # Examples
-    ///
-    /// ```no_run
-    /// # use uuid::Uuid;
-    /// # use sqlx::PgPool;
-    /// # async fn run(pool: PgPool) {
-    /// let repo = LogisticsRepo::new(&pool);
-    /// let req = CreateShipmentRequest {
-    ///     order_id: Uuid::new_v4(),
-    ///     user_id: Uuid::new_v4(),
-    ///     supplier_id: Uuid::new_v4(),
-    ///     product_id: Uuid::new_v4(),
-    ///     notes: Some("Fragile".to_string()),
-    /// };
-    /// let shipment = repo.create_shipment(&req).await.unwrap();
-    /// assert_eq!(shipment.order_id, req.order_id);
-    /// # }
-    /// ```
+    /// Creates a shipment and publishes logistics.shipment_created.
     pub async fn create_shipment(
         &self,
         req: &CreateShipmentRequest,
@@ -77,23 +44,7 @@ impl LogisticsRepo {
         .await
     }
 
-    /// Fetches a shipment by its id.
-    ///
-    /// # Examples
-    ///
-    /// ```no_run
-    /// use uuid::Uuid;
-    /// # async fn example(repo: &crate::LogisticsRepo) -> Result<(), sqlx::Error> {
-    /// let id = Uuid::parse_str("550e8400-e29b-41d4-a716-446655440000").unwrap();
-    /// let shipment = repo.get_shipment(id).await?;
-    /// assert_eq!(shipment.id, id);
-    /// # Ok(())
-    /// # }
-    /// ```
-    ///
-    /// # Returns
-    ///
-    /// The `Shipment` with the specified `id`.
+    /// Returns shipment details by id.
     pub async fn get_shipment(&self, shipment_id: Uuid) -> Result<Shipment, sqlx::Error> {
         sqlx::query_as::<_, Shipment>("SELECT * FROM shipments WHERE id = $1")
             .bind(shipment_id)
@@ -101,22 +52,7 @@ impl LogisticsRepo {
             .await
     }
 
-    /// Fetches a shipment by its order ID.
-    ///
-    /// # Errors
-    ///
-    /// Returns a `sqlx::Error` if no shipment is found for the given `order_id` or if the database query fails.
-    ///
-    /// # Examples
-    ///
-    /// ```no_run
-    /// use uuid::Uuid;
-    /// # async fn example(repo: &LogisticsRepo) -> Result<(), sqlx::Error> {
-    /// let order_id = Uuid::new_v4();
-    /// let shipment = repo.get_by_order_id(order_id).await?;
-    /// # Ok(())
-    /// # }
-    /// ```
+    /// Returns one shipment by order id.
     pub async fn get_by_order_id(&self, order_id: Uuid) -> Result<Shipment, sqlx::Error> {
         sqlx::query_as::<_, Shipment>("SELECT * FROM shipments WHERE order_id = $1")
             .bind(order_id)
@@ -124,22 +60,7 @@ impl LogisticsRepo {
             .await
     }
 
-    /// List shipments for a supplier with an optional status filter and pagination.
-    ///
-    /// Limit defaults to 50 and is clamped to the range 1..=200. Offset defaults to 0 and is clamped to a minimum of 0.
-    /// When `query.status` is `None`, results are not filtered by status. Results are ordered by `created_at` descending.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// // Construct a query that returns the first page with default limit and no status filter.
-    /// let query = ListShipmentQuery { status: None, limit: None, offset: None };
-    /// let shipments = tokio::runtime::Runtime::new()
-    ///     .unwrap()
-    ///     .block_on(repo.list_supplier_shipments(supplier_id, &query))
-    ///     .unwrap();
-    /// assert!(shipments.iter().all(|s| s.supplier_id == supplier_id));
-    /// ```
+    /// Returns supplier shipments using filter and pagination query fields.
     pub async fn list_supplier_shipments(
         &self,
         supplier_id: Uuid,
@@ -166,6 +87,7 @@ impl LogisticsRepo {
         .await
     }
 
+    /// Updates shipment status and publishes logistics.shipment_updated.
     /// Update a shipment's status, setting dispatched_at when transitioning to `Intransit`
     /// and delivered_at when transitioning to `Delivered`, and return the updated shipment.
     ///
@@ -240,6 +162,7 @@ impl LogisticsRepo {
         .await
     }
 
+    /// Cancels the shipment for an order when cancellation is allowed.
     /// Cancels the shipment for the given order if the shipment has not been delivered.
     ///
     /// If the shipment's current status is `delivered`, no update occurs and the query will not return a row.

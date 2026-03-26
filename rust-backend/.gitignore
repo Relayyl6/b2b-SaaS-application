@@ -7,3 +7,4 @@ Cargo.lock
 /user-management/.env
 /order-service/.env
 /analytics/.env
+/logiistics/.env

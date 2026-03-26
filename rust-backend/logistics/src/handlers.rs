@@ -7,28 +7,13 @@ use crate::models::{
     CreateShipmentRequest, ListShipmentQuery, LogisticsEvent, UpdateShipmentStatusRequest,
 };
 use crate::publisher::RedisPublisher;
+use crate::rabbit_pub::RabbitPublisher;
 
-/// Create a new shipment and publish a `logistics.shipment_created` event.
-///
-/// On success responds with HTTP 201 Created and the created shipment as JSON; on failure responds with HTTP 500 and an error message.
-///
-/// # Examples
-///
-/// ```no_run
-/// use actix_web::web;
-/// use crate::models::CreateShipmentRequest;
-///
-/// // `repo` and `redis_pub` are `web::Data` wrappers around your implementations.
-/// let repo = web::Data::new(/* LogisticsRepo instance */);
-/// let redis_pub = web::Data::new(/* RedisPublisher instance */);
-/// let req = web::Json(CreateShipmentRequest { /* fields */ });
-///
-/// // call the handler (typically awaited inside an async runtime)
-/// let _resp = create_shipment(repo, redis_pub, req).await;
-/// ```
+/// Creates a shipment and publishes logistics.shipment_created.
 pub async fn create_shipment(
     repo: web::Data<LogisticsRepo>,
     redis_pub: web::Data<RedisPublisher>,
+    rabbit_pub: web::Data<RabbitPublisher>,
     req: web::Json<CreateShipmentRequest>,
 ) -> impl Responder {
     match repo.create_shipment(&req).await {
@@ -45,12 +30,8 @@ pub async fn create_shipment(
                 timestamp: Utc::now(),
             };
 
-            if let Err(e) = redis_pub
-                .publish("logistics.shipment_created", &event)
-                .await
-            {
-                eprintln!("Redis publish error logistics.shipment_created: {e:?}");
-            }
+            redis_pub.publish_async("logistics.shipment_created", event.clone());
+            rabbit_pub.publish_async(event.clone());
 
             HttpResponse::Created().json(shipment)
         }
@@ -60,18 +41,7 @@ pub async fn create_shipment(
     }
 }
 
-/// Retrieve shipment details by ID.
-///
-/// Returns HTTP 200 with the shipment serialized as JSON when found. If no shipment exists for the given ID returns HTTP 404 with the body "shipment not found". On other database errors returns HTTP 500 with an error message.
-///
-/// # Examples
-///
-/// ```
-/// use uuid::Uuid;
-/// // In tests, construct a repo mock and call the handler through Actix test utilities,
-/// // passing `web::Path::from(id)`; the handler responds with 200/404/500 as documented.
-/// let id = Uuid::parse_str("3fa85f64-5717-4562-b3fc-2c963f66afa6").unwrap();
-/// ```
+/// Returns shipment details by id.
 pub async fn get_shipment(repo: web::Data<LogisticsRepo>, path: web::Path<Uuid>) -> impl Responder {
     match repo.get_shipment(path.into_inner()).await {
         Ok(shipment) => HttpResponse::Ok().json(shipment),
@@ -80,6 +50,7 @@ pub async fn get_shipment(repo: web::Data<LogisticsRepo>, path: web::Path<Uuid>)
     }
 }
 
+/// Returns supplier shipments using filter and pagination query fields.
 /// List shipments for a supplier using filter and pagination query parameters.
 ///
 /// Returns an HTTP response: `200 OK` with the matching shipments as JSON on success, or
@@ -111,34 +82,11 @@ pub async fn list_supplier_shipments(
     }
 }
 
-/// Update a shipment's status and emit a `logistics.shipment_updated` event.
-///
-/// On success returns the updated shipment as JSON with HTTP 200 OK. If the requested
-/// status transition is invalid the handler responds with HTTP 400 Bad Request and the
-/// repository error message. If the shipment does not exist it responds with HTTP 404 Not Found.
-/// For other repository failures it responds with HTTP 500 Internal Server Error.
-/// Publishing the `logistics.shipment_updated` event to Redis is attempted but any publish
-/// failure is logged and does not change the HTTP response.
-///
-/// # Examples
-///
-/// ```no_run
-/// use actix_web::{web, http::StatusCode};
-/// use uuid::Uuid;
-///
-/// // pseudo-code illustrating usage; replace with real repo, redis_pub and request in tests
-/// # async fn example(repo: web::Data<_>, redis_pub: web::Data<_>) {
-/// let shipment_id = Uuid::new_v4();
-/// let req = web::Json(/* UpdateShipmentStatusRequest */);
-/// let resp = update_status(repo, redis_pub, web::Path::from(shipment_id), req).await;
-/// assert!(resp.respond_to(&actix_web::HttpRequest::default()).status() == StatusCode::OK
-///     || resp.respond_to(&actix_web::HttpRequest::default()).status() == StatusCode::BAD_REQUEST
-///     || resp.respond_to(&actix_web::HttpRequest::default()).status() == StatusCode::NOT_FOUND);
-/// # }
-/// ```
+/// Updates shipment status and publishes logistics.shipment_updated.
 pub async fn update_status(
     repo: web::Data<LogisticsRepo>,
     redis_pub: web::Data<RedisPublisher>,
+    rabbit_pub: web::Data<RabbitPublisher>,
     path: web::Path<Uuid>,
     req: web::Json<UpdateShipmentStatusRequest>,
 ) -> impl Responder {
@@ -156,12 +104,8 @@ pub async fn update_status(
                 timestamp: Utc::now(),
             };
 
-            if let Err(e) = redis_pub
-                .publish("logistics.shipment_updated", &event)
-                .await
-            {
-                eprintln!("Redis publish error logistics.shipment_updated: {e:?}");
-            }
+            redis_pub.publish_async("logistics.shipment_updated", event.clone());
+            rabbit_pub.publish_async(event.clone());
 
             HttpResponse::Ok().json(shipment)
         }
