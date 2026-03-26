@@ -35,6 +35,8 @@ use crate::publisher::RedisPublisher;
 /// });
 /// # }
 /// ```
+// TODO(redis): remove once redis async pubsub API replacement is adopted across services (target Q2 2026).
+// Using deprecated `Client::get_async_connection` for compatibility with current redis crate usage.
 #[allow(deprecated)]
 pub async fn listen_to_redis_events(
     repo: Data<LogisticsRepo>,
@@ -54,12 +56,18 @@ pub async fn listen_to_redis_events(
         };
 
         let mut pubsub = conn.into_pubsub();
+        let mut subscribed = true;
         for channel in ["inventory.reserved", "order.cancelled"] {
             if let Err(e) = pubsub.subscribe(channel).await {
                 eprintln!("Failed to subscribe to {channel}: {e:?}");
-                tokio::time::sleep(std::time::Duration::from_secs(2)).await;
-                continue;
+                subscribed = false;
+                break;
             }
+        }
+        if !subscribed {
+            drop(pubsub);
+            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+            continue;
         }
 
         let mut stream = pubsub.on_message();
@@ -88,11 +96,20 @@ pub async fn listen_to_redis_events(
             match route_key {
                 "inventory.reserved" => {
                     let Some(order_id) = event.order_id else {
+                        eprintln!(
+                            "Skipping inventory.reserved event: missing order_id (event_type={})",
+                            event.event_type
+                        );
                         continue;
                     };
                     let Some(user_id) = event.user_id else {
+                        eprintln!("Skipping inventory.reserved event: missing user_id for order {order_id}");
                         continue;
                     };
+                    if event.supplier_id.is_nil() {
+                        eprintln!("Skipping inventory.reserved event: nil supplier_id for order {order_id}");
+                        continue;
+                    }
 
                     match repo.get_by_order_id(order_id).await {
                         Ok(_) => continue,
@@ -113,24 +130,31 @@ pub async fn listen_to_redis_events(
                         notes: Some("Created from inventory reservation".to_string()),
                     };
 
-                    if let Ok(shipment) = repo.create_shipment(&req).await {
-                        let outbound = LogisticsEvent {
-                            event_type: "logistics.shipment_created".to_string(),
-                            shipment_id: shipment.id,
-                            order_id: shipment.order_id,
-                            user_id: shipment.user_id,
-                            supplier_id: shipment.supplier_id,
-                            product_id: shipment.product_id,
-                            status: shipment.status,
-                            tracking_number: shipment.tracking_number,
-                            timestamp: Utc::now(),
-                        };
+                    match repo.create_shipment(&req).await {
+                        Ok(shipment) => {
+                            let outbound = LogisticsEvent {
+                                event_type: "logistics.shipment_created".to_string(),
+                                shipment_id: shipment.id,
+                                order_id: shipment.order_id,
+                                user_id: shipment.user_id,
+                                supplier_id: shipment.supplier_id,
+                                product_id: shipment.product_id,
+                                status: shipment.status,
+                                tracking_number: shipment.tracking_number,
+                                timestamp: Utc::now(),
+                            };
 
-                        if let Err(e) = redis_pub
-                            .publish("logistics.shipment_created", &outbound)
-                            .await
-                        {
-                            eprintln!("Failed publishing logistics.shipment_created event: {e:?}");
+                            if let Err(e) = redis_pub
+                                .publish("logistics.shipment_created", &outbound)
+                                .await
+                            {
+                                eprintln!(
+                                    "Failed publishing logistics.shipment_created event: {e:?}"
+                                );
+                            }
+                        }
+                        Err(e) => {
+                            eprintln!("Failed creating shipment for order {order_id}: {e:?}");
                         }
                     }
                 }
