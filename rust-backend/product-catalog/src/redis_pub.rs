@@ -1,23 +1,59 @@
 use redis::{AsyncCommands, Client, RedisError};
 use std::env;
-use tokio::time::{Duration, timeout};
-use tracing::warn;
-
-const REDIS_PUBLISH_TIMEOUT_MS: u64 = 300;
+use tokio::sync::mpsc::{self, Sender};
+use tokio::time::{Duration, sleep};
 
 #[derive(Clone)]
 pub struct RedisPublisher {
-    client: Client,
+    client: Option<Client>,
     enabled: bool,
+    redis_publish_sender: Option<Sender<(String, String)>>,
 }
 
 impl RedisPublisher {
-    /// Creates a new instance with the provided dependencies.
     pub async fn new(redis_url: &str) -> Result<Self, RedisError> {
         let client = Client::open(redis_url)?;
+        let (tx, mut rx) = mpsc::channel::<(String, String)>(256);
+        let worker_client = client.clone();
+
+        tokio::spawn(async move {
+            while let Some((channel, payload)) = rx.recv().await {
+                let mut attempts = 0;
+                loop {
+                    attempts += 1;
+                    match worker_client.get_multiplexed_async_connection().await {
+                        Ok(mut conn) => {
+                            let result = conn.publish::<_, _, ()>(&channel, payload.clone()).await;
+                            if result.is_ok() || attempts >= 3 {
+                                if let Err(e) = result {
+                                    eprintln!(
+                                        "❌ Redis publish worker failed for channel '{}' after {} attempts: {:?}",
+                                        channel, attempts, e
+                                    );
+                                }
+                                break;
+                            }
+                        }
+                        Err(e) => {
+                            if attempts >= 3 {
+                                eprintln!(
+                                    "⚠️ Redis publish worker reconnect failed for channel '{}' after {} attempts: {:?}",
+                                    channel, attempts, e
+                                );
+                                break;
+                            }
+                        }
+                    }
+
+                    sleep(Duration::from_millis(100)).await;
+                }
+            }
+        });
+
         Ok(Self {
-            client,
+            client: Some(client),
             enabled: true,
+            redis_publish_sender: Some(tx),
         })
     }
 
@@ -39,81 +75,34 @@ impl RedisPublisher {
             ))
         })?;
 
-        let publish_future = async {
-            let mut conn = self.client.get_multiplexed_async_connection().await?;
-            conn.publish::<_, _, ()>(channel, payload).await?;
-            Ok::<(), RedisError>(())
-        };
+        let sender = self.redis_publish_sender.as_ref().ok_or_else(|| {
+            RedisError::from((
+                redis::ErrorKind::ClientError,
+                "Redis publish queue not configured",
+            ))
+        })?;
 
-        match timeout(
-            Duration::from_millis(REDIS_PUBLISH_TIMEOUT_MS),
-            publish_future,
-        )
-        .await
-        {
-            Ok(result) => result,
-            Err(_) => {
-                warn!(channel, "redis publish timed out and was skipped");
-                Ok(())
-            }
-        }
+        sender
+            .try_send((channel.to_string(), payload))
+            .map_err(|e| {
+                RedisError::from((
+                    redis::ErrorKind::BusyLoadingError,
+                    "Redis publish queue is full or closed",
+                    e.to_string(),
+                ))
+            })
     }
 
-    async fn publish_payload(&self, channel: &str, payload: String) -> Result<(), RedisError> {
-        if !self.enabled {
-            return Ok(());
-        }
-
-        let publish_future = async {
-            let mut conn = self.client.get_multiplexed_async_connection().await?;
-            conn.publish::<_, _, ()>(channel, payload).await?;
-            Ok::<(), RedisError>(())
-        };
-
-        match timeout(
-            Duration::from_millis(REDIS_PUBLISH_TIMEOUT_MS),
-            publish_future,
-        )
-        .await
-        {
-            Ok(result) => result,
-            Err(_) => {
-                warn!(channel, "redis publish timed out and was skipped");
-                Ok(())
-            }
-        }
-    }
-
-    /// Publishes in a detached task so request handlers never block on Redis.
-    pub fn publish_async<T>(&self, channel: &str, message: T)
-    where
-        T: serde::Serialize,
-    {
-        let payload = match serde_json::to_string(&message) {
-            Ok(payload) => payload,
-            Err(err) => {
-                warn!(%channel, error = ?err, "failed to serialize redis payload");
-                return;
-            }
-        };
-        let this = self.clone();
-        let channel = channel.to_string();
-        tokio::spawn(async move {
-            if let Err(err) = this.publish_payload(&channel, payload).await {
-                warn!(%channel, error = ?err, "redis publish failed");
-            }
-        });
-    }
-
-    /// Creates a disabled publisher that drops publish calls.
     pub fn new_noop() -> Self {
-        let redis_url = env::var("REDIS_URL").unwrap_or_else(|_| "redis://127.0.0.1/".to_string());
-        let client = Client::open(redis_url)
-            .unwrap_or_else(|_| Client::open("redis://127.0.0.1/").expect("redis fallback"));
         Self {
-            client,
+            client: None,
             enabled: false,
+            redis_publish_sender: None,
         }
+    }
+
+    pub fn client(&self) -> Option<&Client> {
+        self.client.as_ref()
     }
 }
 

@@ -7,7 +7,7 @@ const REDIS_PUBLISH_TIMEOUT_MS: u64 = 300;
 
 #[derive(Clone)]
 pub struct RedisPublisher {
-    client: Client,
+    client: Option<Client>,
     enabled: bool,
 }
 
@@ -16,7 +16,7 @@ impl RedisPublisher {
     pub async fn new(redis_url: &str) -> Result<Self, RedisError> {
         let client = Client::open(redis_url)?;
         Ok(Self {
-            client,
+            client: Some(client),
             enabled: true,
         })
     }
@@ -43,22 +43,31 @@ impl RedisPublisher {
             ))
         })?;
 
-        let publish_future = async {
-            let mut conn = self.client.get_multiplexed_async_connection().await?;
-            conn.publish::<_, _, ()>(channel, payload).await?;
-            Ok::<(), RedisError>(())
-        };
-
-        match timeout(
-            Duration::from_millis(REDIS_PUBLISH_TIMEOUT_MS),
-            publish_future,
-        )
-        .await
-        {
-            Ok(result) => result,
-            Err(_) => {
-                warn!(channel, "redis publish timed out and was skipped");
-                Ok(())
+        let mut attempts = 0;
+        loop {
+            attempts += 1;
+            let Some(client) = &self.client else {
+                return Err(redis::RedisError::from((
+                    redis::ErrorKind::ClientError,
+                    "Redis client not configured",
+                )));
+            };
+            match client.get_multiplexed_async_connection().await {
+                Ok(mut conn) => {
+                    let result: Result<(), RedisError> =
+                        conn.publish(channel, payload.clone()).await;
+                    if result.is_ok() {
+                        return Ok(());
+                    }
+                    if attempts >= 3 {
+                        return result;
+                    }
+                }
+                Err(e) => {
+                    if attempts >= 3 {
+                        return Err(e);
+                    }
+                }
             }
         }
     }
@@ -74,17 +83,7 @@ impl RedisPublisher {
             Ok::<(), RedisError>(())
         };
 
-        match timeout(
-            Duration::from_millis(REDIS_PUBLISH_TIMEOUT_MS),
-            publish_future,
-        )
-        .await
-        {
-            Ok(result) => result,
-            Err(_) => {
-                warn!(channel, "redis publish timed out and was skipped");
-                Ok(())
-            }
+            sleep(Duration::from_millis(100)).await;
         }
     }
 
@@ -116,7 +115,7 @@ impl RedisPublisher {
             .unwrap_or_else(|_| Client::open("redis://127.0.0.1/").expect("redis fallback"));
 
         Self {
-            client,
+            client: None,
             enabled: false,
         }
     }

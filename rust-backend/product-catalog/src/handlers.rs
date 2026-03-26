@@ -110,8 +110,9 @@ pub async fn update_product(
     let (supplier_id, product_id) = path.into_inner();
     let mut update_data = req.into_inner();
 
-    if update_data.quantity_change.is_some() {
-        update_data.quantity = None;
+    if update_data.quantity.is_some() && update_data.quantity_change.is_some() {
+        return HttpResponse::BadRequest()
+            .body("Provide either quantity or quantity_change, not both");
     }
 
     match repo
@@ -163,9 +164,22 @@ pub async fn delete_product(
             });
             redis_pub.publish_async("product.deleted", event.clone());
 
-            if let Ok(mut conn) = redis_client.get_multiplexed_async_connection().await {
-                let cache_key = format!("products:supplier:{}", supplier_id);
-                let _: Result<(), _> = conn.del(cache_key).await;
+            let cache_key = format!("products:supplier:{}", supplier_id);
+            match redis_client.get_multiplexed_async_connection().await {
+                Ok(mut conn) => {
+                    if let Err(e) = conn.del::<_, ()>(&cache_key).await {
+                        eprintln!(
+                            "Redis cache invalidation error (delete_product): supplier_id={}, cache_key={}, err={:?}",
+                            supplier_id, cache_key, e
+                        );
+                    }
+                }
+                Err(e) => {
+                    eprintln!(
+                        "Redis connection error for cache invalidation (delete_product): supplier_id={}, cache_key={}, err={:?}",
+                        supplier_id, cache_key, e
+                    );
+                }
             }
 
             HttpResponse::Ok().body("Product deleted successfully")
@@ -184,24 +198,53 @@ pub async fn search_products(
     query: web::Query<HashMap<String, String>>,
 ) -> impl Responder {
     let category = query.get("category").cloned();
-    let min_price = query.get("min_price").and_then(|s| s.parse::<f64>().ok());
-    let max_price = query.get("max_price").and_then(|s| s.parse::<f64>().ok());
-    let supplier_id = query
-        .get("supplier_id")
-        .and_then(|s| Uuid::parse_str(s).ok());
-    let product_id = query
-        .get("product_id")
-        .and_then(|s| Uuid::parse_str(s).ok());
-    let limit = query
-        .get("limit")
-        .and_then(|s| s.parse::<i64>().ok())
-        .unwrap_or(50)
-        .clamp(1, 200);
-    let offset = query
-        .get("offset")
-        .and_then(|s| s.parse::<i64>().ok())
-        .unwrap_or(0)
-        .max(0);
+
+    let min_price = match query.get("min_price") {
+        Some(v) => match v.parse::<f64>() {
+            Ok(parsed) => Some(parsed),
+            Err(_) => return HttpResponse::BadRequest().body("Invalid min_price"),
+        },
+        None => None,
+    };
+    let max_price = match query.get("max_price") {
+        Some(v) => match v.parse::<f64>() {
+            Ok(parsed) => Some(parsed),
+            Err(_) => return HttpResponse::BadRequest().body("Invalid max_price"),
+        },
+        None => None,
+    };
+
+    let supplier_id = match query.get("supplier_id") {
+        Some(v) => match Uuid::parse_str(v) {
+            Ok(id) => Some(id),
+            Err(_) => return HttpResponse::BadRequest().body("Invalid supplier_id"),
+        },
+        None => None,
+    };
+    let product_id = match query.get("product_id") {
+        Some(v) => match Uuid::parse_str(v) {
+            Ok(id) => Some(id),
+            Err(_) => return HttpResponse::BadRequest().body("Invalid product_id"),
+        },
+        None => None,
+    };
+
+    let limit = match query.get("limit") {
+        Some(v) => match v.parse::<i64>() {
+            Ok(parsed) => parsed,
+            Err(_) => return HttpResponse::BadRequest().body("Invalid limit"),
+        },
+        None => 50,
+    }
+    .clamp(1, 200);
+    let offset = match query.get("offset") {
+        Some(v) => match v.parse::<i64>() {
+            Ok(parsed) => parsed,
+            Err(_) => return HttpResponse::BadRequest().body("Invalid offset"),
+        },
+        None => 0,
+    }
+    .max(0);
 
     match repo
         .search_products(
@@ -330,6 +373,17 @@ pub async fn sign_cloudinary_upload(req: web::Json<SignAssetUploadRequest>) -> i
         .folder
         .clone()
         .unwrap_or_else(|| "b2b-saas/products".to_string());
+    if !folder.starts_with("b2b-saas/products") || folder.contains("..") {
+        return HttpResponse::BadRequest().body("Invalid folder");
+    }
+    if let Some(public_id) = &req.public_id {
+        let valid = public_id
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-' || c == '/');
+        if !valid || public_id.contains("..") {
+            return HttpResponse::BadRequest().body("Invalid public_id");
+        }
+    }
     let timestamp = Utc::now().timestamp();
 
     let mut sign_parts = vec![format!("folder={folder}"), format!("timestamp={timestamp}")];

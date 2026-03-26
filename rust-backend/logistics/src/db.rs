@@ -184,7 +184,7 @@ impl LogisticsRepo {
             UPDATE shipments
             SET status = 'cancelled', updated_at = NOW()
             WHERE order_id = $1
-              AND status != 'delivered'
+              AND status IN ('pending', 'intransit')
             RETURNING *
             "#,
         )
