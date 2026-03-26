@@ -57,16 +57,13 @@ impl RedisPublisher {
         })
     }
 
+    /// Publishes a serialized message to Redis with a bounded timeout.
     pub async fn publish<T: serde::Serialize>(
         &self,
         channel: &str,
         message: &T,
     ) -> Result<(), RedisError> {
         if !self.enabled {
-            eprintln!(
-                "🟡 RedisPublisher disabled — skipping publish for channel '{}'",
-                channel
-            );
             return Ok(());
         }
 
@@ -106,5 +103,19 @@ impl RedisPublisher {
 
     pub fn client(&self) -> Option<&Client> {
         self.client.as_ref()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::RedisPublisher;
+
+    #[tokio::test]
+    async fn noop_publish_returns_ok() {
+        let publisher = RedisPublisher::new_noop();
+        let result = publisher
+            .publish("product.test", &serde_json::json!({"ok": true}))
+            .await;
+        assert!(result.is_ok());
     }
 }

@@ -19,3 +19,6 @@ redis = { version = "0.23", features = ["aio", "tokio-comp"] }
 uuid = { version = "1", features = ["serde", "v4"] }
 reqwest = { version = "0.12", features = ["json"] }
 futures-util = "0.3.31"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
+

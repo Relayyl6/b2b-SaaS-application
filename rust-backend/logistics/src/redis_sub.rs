@@ -7,6 +7,7 @@ use std::env;
 use crate::db::LogisticsRepo;
 use crate::models::{CreateShipmentRequest, IncomingOrderEvent, LogisticsEvent, ShipmentStatus};
 use crate::publisher::RedisPublisher;
+use crate::rabbit_pub::RabbitPublisher;
 
 /// Listens to Redis pub/sub channels and applies logistics side effects by creating or cancelling shipments.
 ///
@@ -38,9 +39,11 @@ use crate::publisher::RedisPublisher;
 // TODO(redis): remove once redis async pubsub API replacement is adopted across services (target Q2 2026).
 // Using deprecated `Client::get_async_connection` for compatibility with current redis crate usage.
 #[allow(deprecated)]
+/// Consumes Redis pub/sub events and applies logistics side effects.
 pub async fn listen_to_redis_events(
     repo: Data<LogisticsRepo>,
     redis_pub: Data<RedisPublisher>,
+    rabbit_pub: Data<RabbitPublisher>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let redis_url = env::var("REDIS_URL").map_err(|_| "REDIS_URL must be set in environment")?;
 
@@ -174,12 +177,11 @@ pub async fn listen_to_redis_events(
                                     timestamp: Utc::now(),
                                 };
 
-                                if let Err(e) = redis_pub
-                                    .publish("logistics.shipment_cancelled", &outbound)
-                                    .await
-                                {
-                                    eprintln!("Failed publishing logistics.shipment_cancelled event: {e:?}");
-                                }
+                                redis_pub.publish_async(
+                                    "logistics.shipment_cancelled",
+                                    outbound.clone(),
+                                );
+                                rabbit_pub.publish_async(outbound.clone());
                             }
                             Err(sqlx::Error::RowNotFound) => {}
                             Err(e) => eprintln!("Failed to cancel shipment by order id: {e:?}"),
