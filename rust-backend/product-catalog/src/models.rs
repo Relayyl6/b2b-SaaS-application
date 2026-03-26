@@ -122,5 +122,5 @@ pub struct ProductEvent {
     pub reservation_id: Option<Uuid>,
     pub timestamp: Option<DateTime<Utc>>,
     pub expires_at: Option<DateTime<Utc>>,
-    pub user_id: Option<Uuid>, // pub status: OrderStatus,
+    pub user_id: Option<Uuid>,
 }
