@@ -4,6 +4,7 @@ use sqlx::FromRow;
 use uuid::Uuid;
 
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::Type, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
 #[sqlx(type_name = "shipment_status", rename_all = "lowercase")]
 pub enum ShipmentStatus {
     Pending,
