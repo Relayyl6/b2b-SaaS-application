@@ -1,4 +1,4 @@
-FROM rust:1.84 as builder
+FROM rust:latest as builder
 WORKDIR /app
 COPY . .
 WORKDIR /app/rust-backend/analytics

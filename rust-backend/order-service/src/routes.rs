@@ -119,7 +119,7 @@ pub async fn update_status(
         .unwrap_or(Utc::now() + Duration::seconds(2 * 24 * 60 * 60));
     let product_id = req.product_id.unwrap_or(Uuid::new_v4());
 
-    // 1️⃣ Update status and return the final updated status
+    // Update status and return the final updated status
     let result = sqlx::query_as::<_, Order>(
         r#"
             UPDATE orders

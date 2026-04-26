@@ -33,13 +33,14 @@ impl AnalyticsEvent {
         if self.event_type.starts_with("inventory.") {
             return self.supplier_id.unwrap_or_else(Uuid::new_v4);
         }
+        if self.event_type.starts_with("logistics.") {
+            return self.shipment_id.unwrap_or_else(Uuid::new_v4);
+        }
         // default for unknown events
         Uuid::new_v4()
     }
 }
 
-
-<<<<<<< HEAD
 impl Event {
     pub fn new(
         event: AnalyticsEvent
@@ -58,19 +59,6 @@ impl Event {
             }
         )
     }
-=======
-// impl Event {
-//     pub fn new(
-//         event: &Event
-//     ) -> Self {
-//         Event {
-//             event_type: event.event_type.into(),
-//             event_timestamp: event.timestamp,
-//             data: event,
-//             id: event.id,
-//         }
-//     }
->>>>>>> c420c33e89a7137dbccbb6b9b6d9ec10d29b6400
 }
 
 
@@ -88,7 +76,6 @@ pub async fn metric_table_map() -> HashMap<&'static str, &'static str> {
     m.insert("payments", "analytics.payments_daily");
     m.insert("notifications", "analytics.notifications_daily");
     m.insert("top_products_7d", "analytics.top_products_7d");
-    m
 }
 
 

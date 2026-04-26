@@ -24,7 +24,7 @@ async fn main() -> std::io::Result<()> {
     tracing_subscriber::fmt::init();
 
     let redis_url = env::var("REDIS_URL").ok();
-    let port = env::var("PORT").unwrap_or_else(|_| "3006".to_string());
+    let port = env::var("PORT").unwrap_or_else(|_| "3005".to_string());
 
     let host = env::var("HOST").unwrap_or_else(|_| "localhost".to_string());
     let addr = format!("{}:{}", host, port);
@@ -44,6 +44,7 @@ async fn main() -> std::io::Result<()> {
         )
         .expect("redis client"),
     );
+    
     let redis_pub = match &redis_url {
         Some(url) => match RedisPublisher::new(url).await {
             Ok(pubw) => web::Data::new(pubw),
