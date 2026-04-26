@@ -24,7 +24,7 @@ async fn main() -> std::io::Result<()> {
 
     let db_url = env::var("DATABASE_URL").expect("DATABASE_URL not set");
     let redis_url = env::var("REDIS_URL");
-    let port = env::var("SERVICE_PORT").unwrap_or_else(|_| "3002".into());
+    let port = env::var("SERVICE_PORT").unwrap_or_else(|_| "3006".into());
 
     // println!("Connecting to DB: {}", db_url);
     let pool = PgPoolOptions::new()

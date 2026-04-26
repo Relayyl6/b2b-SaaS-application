@@ -202,6 +202,8 @@ async fn insert_event(
         t if t.starts_with("order.") => "order_id",
         t if t.starts_with("product.") => "product_id",
         t if t.starts_with("user.") => "user_id",
+        t if t.starts_with("logistics.") => "shipment_id",
+        t if t.starts_with("inventory.") => "supplier_id",
         _ => "random",
     };
 

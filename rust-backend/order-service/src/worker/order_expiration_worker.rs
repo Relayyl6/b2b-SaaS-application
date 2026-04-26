@@ -3,10 +3,11 @@ use chrono::Utc;
 use serde_json::json;
 use sqlx::PgPool;
 use tokio::time::{interval, Duration};
+use crate::models::OrderEvent;
 
 pub async fn start_order_expiration_worker(pool: PgPool, redis_pub: RedisPublisher) {
     tokio::spawn(async move {
-        let mut timer = interval(Duration::from_secs(2 * 24 * 60 * 60));
+        let mut timer = interval(Duration::from_secs(2 * 24 * 60 * 60)); // 2 days
 
         loop {
             timer.tick().await;
@@ -32,14 +33,14 @@ async fn fail_expired_orders(pool: &PgPool, redis_pub: &RedisPublisher) -> Resul
             .execute(pool)
             .await?;
 
-        let event = json!({
-            "event_type": "order.failed",
-            "id": id,
-            "user_id": user_id,
-            "product_id": product_id,
-            "new_status": "failed".to_string(),
+        let event = OrderEvent{
+            "event_type": "order.failed".to_string(),
+            "order_id": Some(id),
+            "user_id": Some(user_id),
+            "product_id": Some(product_id),
             "timestamp": Utc::now().timestamp_millis(),
-        });
+            ..Default::default()
+        };
 
         redis_pub.publish_async("order.failed", event);
     }
