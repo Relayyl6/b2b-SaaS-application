@@ -16,6 +16,7 @@ pub struct Order {
     pub updated_at: Option<DateTime<Utc>>,
     pub expires_at: DateTime<Utc>,
     pub order_timestamp: DateTime<Utc>,
+    pub version: i32,
 }
 
 // items is basically the name of whatever you ordered
@@ -29,7 +30,7 @@ pub struct CreateOrderRequest {
     pub items: serde_json::Value,
 }
 
-#[derive(Deserialize)]
+#[derive(Serialize, Deserialize)]
 pub struct UpdateOrderStatus {
     #[allow(dead_code)] // deserialized from request body; reserved for validation/future use
     pub id: Uuid,
@@ -38,17 +39,20 @@ pub struct UpdateOrderStatus {
     pub new_status: Option<OrderStatus>,
     pub expires_at: Option<DateTime<Utc>>,
     pub order_timestamp: Option<DateTime<Utc>>,
+    pub expected_version: Option<i32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::Type, PartialEq, Eq)]
 #[sqlx(type_name = "order_status", rename_all = "lowercase")]
 pub enum OrderStatus {
     Pending,
+    Processing,
     Confirmed,
     Shipped,
     Delivered,
     Cancelled,
     Failed,
+    Refunded,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, Default)]
@@ -76,4 +80,17 @@ pub struct OrderEvent {
     // pub status: OrderStatus,
 }
 
-// -- products inventor
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_order_status_serialization() {
+        assert_eq!(serde_json::to_string(&OrderStatus::Pending).unwrap(), "\"pending\"");
+        assert_eq!(serde_json::to_string(&OrderStatus::Confirmed).unwrap(), "\"confirmed\"");
+        
+        let status: OrderStatus = serde_json::from_str("\"shipped\"").unwrap();
+        assert_eq!(status, OrderStatus::Shipped);
+    }
+}
+

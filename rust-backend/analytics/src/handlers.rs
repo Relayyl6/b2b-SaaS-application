@@ -272,3 +272,53 @@ impl AnalyticsRepo {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use actix_web::test;
+    use sqlx::postgres::PgPoolOptions;
+
+    fn dummy_pool() -> web::Data<PgPool> {
+        let pool = PgPoolOptions::new().connect_lazy("postgres://postgres:postgres@localhost:5432/dummy").unwrap();
+        web::Data::new(pool)
+    }
+
+    #[actix_web::test]
+    async fn test_analytics_handler_missing_metric() {
+        let q = web::Query(HashMap::new());
+        let res = AnalyticsRepo::analytics_handler(dummy_pool(), q, None).await;
+
+        use actix_web::Responder;
+        let req_for_respond = test::TestRequest::default().to_http_request();
+        let res = res.respond_to(&req_for_respond);
+        assert_eq!(res.status(), actix_web::http::StatusCode::BAD_REQUEST);
+    }
+
+    #[actix_web::test]
+    async fn test_analytics_handler_unknown_metric() {
+        let mut map = HashMap::new();
+        map.insert("metric".to_string(), "unknown_metric_xyz".to_string());
+        let q = web::Query(map);
+        let res = AnalyticsRepo::analytics_handler(dummy_pool(), q, None).await;
+
+        use actix_web::Responder;
+        let req_for_respond = test::TestRequest::default().to_http_request();
+        let res = res.respond_to(&req_for_respond);
+        assert_eq!(res.status(), actix_web::http::StatusCode::BAD_REQUEST);
+    }
+
+    #[actix_web::test]
+    async fn test_analytics_handler_invalid_group_by() {
+        let mut map = HashMap::new();
+        map.insert("metric".to_string(), "signups".to_string());
+        map.insert("group_by".to_string(), "invalid_column".to_string());
+        let q = web::Query(map);
+        let res = AnalyticsRepo::analytics_handler(dummy_pool(), q, None).await;
+
+        use actix_web::Responder;
+        let req_for_respond = test::TestRequest::default().to_http_request();
+        let res = res.respond_to(&req_for_respond);
+        assert_eq!(res.status(), actix_web::http::StatusCode::BAD_REQUEST);
+    }
+}

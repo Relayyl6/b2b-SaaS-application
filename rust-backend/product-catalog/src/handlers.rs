@@ -5,11 +5,11 @@ use crate::models::{
 };
 use crate::rabbit_pub::publish_example_event;
 use crate::redis_pub::RedisPublisher;
+use crate::storage::StorageProvider;
 use actix_web::{HttpResponse, Responder, web};
 use chrono::Utc;
 use redis::AsyncCommands;
 use serde_json::json;
-use sha1::{Digest, Sha1};
 use std::collections::HashMap;
 use std::env;
 use uuid::Uuid;
@@ -18,6 +18,7 @@ use uuid::Uuid;
 pub async fn create_product(
     repo: web::Data<ProductRepo>,
     redis_pub: web::Data<RedisPublisher>,
+    redis_client: web::Data<redis::Client>,
     req: web::Json<CreateProductRequest>,
 ) -> impl Responder {
     match repo.create_product(&req).await {
@@ -40,6 +41,12 @@ pub async fn create_product(
             if let Err(e) = publish_example_event(&event).await {
                 eprintln!("Rabbit publish error (product.created): {:?}", e);
             }
+
+            let cache_key = format!("products:supplier:{}", product.supplier_id);
+            if let Ok(mut conn) = redis_client.get_multiplexed_async_connection().await {
+                let _: redis::RedisResult<()> = conn.del(&cache_key).await;
+            }
+
             HttpResponse::Created().json(product)
         }
         Err(e) => {
@@ -53,9 +60,21 @@ pub async fn create_product(
 pub async fn get_products_for_supplier(
     repo: web::Data<ProductRepo>,
     redis_pub: web::Data<RedisPublisher>,
+    redis_client: web::Data<redis::Client>,
     path: web::Path<Uuid>,
 ) -> impl Responder {
     let supplier_id = path.into_inner();
+    let cache_key = format!("products:supplier:{}", supplier_id);
+
+    if let Ok(mut conn) = redis_client.get_multiplexed_async_connection().await {
+        if let Ok(cached_json) = conn.get::<_, String>(&cache_key).await {
+            if let Ok(items) = serde_json::from_str::<Vec<crate::models::Product>>(&cached_json) {
+                // Background viewing emission could still happen here if needed
+                return HttpResponse::Ok().json(&items);
+            }
+        }
+    }
+
     match repo.get_by_supplier(supplier_id).await {
         Ok(items) => {
             for item in &items {
@@ -75,6 +94,13 @@ pub async fn get_products_for_supplier(
                 };
                 redis_pub.publish_async("product.viewed", event.clone());
             }
+
+            if let Ok(mut conn) = redis_client.get_multiplexed_async_connection().await {
+                if let Ok(json_str) = serde_json::to_string(&items) {
+                    let _: redis::RedisResult<()> = conn.set_ex(&cache_key, json_str, 3600).await; // 1 hr TTL
+                }
+            }
+
             HttpResponse::Ok().json(&items)
         }
         Err(e) => {
@@ -104,6 +130,7 @@ pub async fn get_single_product(
 pub async fn update_product(
     repo: web::Data<ProductRepo>,
     redis_pub: web::Data<RedisPublisher>,
+    redis_client: web::Data<redis::Client>,
     path: web::Path<(Uuid, Uuid)>,
     req: web::Json<UpdateProductRequest>,
 ) -> impl Responder {
@@ -136,6 +163,11 @@ pub async fn update_product(
                 ..Default::default()
             };
             redis_pub.publish_async("product.updated", event.clone());
+
+            let cache_key = format!("products:supplier:{}", supplier_id);
+            if let Ok(mut conn) = redis_client.get_multiplexed_async_connection().await {
+                let _: redis::RedisResult<()> = conn.del(&cache_key).await;
+            }
 
             HttpResponse::Ok().json(p)
         }
@@ -355,20 +387,10 @@ pub async fn delete_product_asset(
 }
 
 /// Generates signed Cloudinary upload parameters for direct client uploads.
-pub async fn sign_cloudinary_upload(req: web::Json<SignAssetUploadRequest>) -> impl Responder {
-    let cloud_name = match env::var("CLOUDINARY_CLOUD_NAME") {
-        Ok(v) => v,
-        Err(_) => return HttpResponse::ServiceUnavailable().body("Missing CLOUDINARY_CLOUD_NAME"),
-    };
-    let api_key = match env::var("CLOUDINARY_API_KEY") {
-        Ok(v) => v,
-        Err(_) => return HttpResponse::ServiceUnavailable().body("Missing CLOUDINARY_API_KEY"),
-    };
-    let api_secret = match env::var("CLOUDINARY_API_SECRET") {
-        Ok(v) => v,
-        Err(_) => return HttpResponse::ServiceUnavailable().body("Missing CLOUDINARY_API_SECRET"),
-    };
-
+pub async fn sign_cloudinary_upload(
+    storage: web::Data<std::sync::Arc<dyn StorageProvider>>,
+    req: web::Json<SignAssetUploadRequest>,
+) -> impl Responder {
     let folder = req
         .folder
         .clone()
@@ -384,24 +406,82 @@ pub async fn sign_cloudinary_upload(req: web::Json<SignAssetUploadRequest>) -> i
             return HttpResponse::BadRequest().body("Invalid public_id");
         }
     }
-    let timestamp = Utc::now().timestamp();
 
-    let mut sign_parts = vec![format!("folder={folder}"), format!("timestamp={timestamp}")];
-    if let Some(public_id) = &req.public_id {
-        sign_parts.push(format!("public_id={public_id}"));
+    match storage.sign_upload(&folder, req.public_id.as_deref()) {
+        Ok(res) => HttpResponse::Ok().json(res),
+        Err(err) => HttpResponse::InternalServerError().body(err),
     }
-    sign_parts.sort();
-    let to_sign = format!("{}{}", sign_parts.join("&"), api_secret);
-    let mut hasher = Sha1::new();
-    hasher.update(to_sign.as_bytes());
-    let signature = format!("{:x}", hasher.finalize());
+}
 
-    HttpResponse::Ok().json(SignedUploadResponse {
-        cloud_name,
-        api_key,
-        timestamp,
-        signature,
-        folder,
-        public_id: req.public_id.clone(),
-    })
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::storage::StorageProvider;
+    use actix_web::{http::StatusCode, test, web};
+
+    struct MockStorageProvider;
+    impl StorageProvider for MockStorageProvider {
+        fn sign_upload(
+            &self,
+            folder: &str,
+            public_id: Option<&str>,
+        ) -> Result<crate::models::SignedUploadResponse, String> {
+            Ok(crate::models::SignedUploadResponse {
+                cloud_name: "mock_cloud".to_string(),
+                api_key: "mock_key".to_string(),
+                timestamp: 1234567890,
+                signature: "mock_sig".to_string(),
+                folder: folder.to_string(),
+                public_id: public_id.map(String::from),
+            })
+        }
+    }
+
+    #[actix_web::test]
+    async fn test_sign_cloudinary_upload_valid() {
+        let storage: std::sync::Arc<dyn StorageProvider> = std::sync::Arc::new(MockStorageProvider);
+        let storage_data = web::Data::new(storage);
+
+        let req_data = SignAssetUploadRequest {
+            folder: Some("b2b-saas/products/test".to_string()),
+            public_id: Some("valid_id".to_string()),
+        };
+        let req_json = web::Json(req_data);
+
+        let response = sign_cloudinary_upload(storage_data.clone(), req_json).await;
+        let resp = response.respond_to(&actix_web::HttpRequest::default());
+        assert_eq!(resp.status(), StatusCode::OK);
+    }
+
+    #[actix_web::test]
+    async fn test_sign_cloudinary_upload_invalid_folder() {
+        let storage: std::sync::Arc<dyn StorageProvider> = std::sync::Arc::new(MockStorageProvider);
+        let storage_data = web::Data::new(storage);
+
+        let req_data = SignAssetUploadRequest {
+            folder: Some("invalid/folder".to_string()),
+            public_id: Some("valid_id".to_string()),
+        };
+        let req_json = web::Json(req_data);
+
+        let response = sign_cloudinary_upload(storage_data.clone(), req_json).await;
+        let resp = response.respond_to(&actix_web::HttpRequest::default());
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[actix_web::test]
+    async fn test_sign_cloudinary_upload_invalid_public_id() {
+        let storage: std::sync::Arc<dyn StorageProvider> = std::sync::Arc::new(MockStorageProvider);
+        let storage_data = web::Data::new(storage);
+
+        let req_data = SignAssetUploadRequest {
+            folder: Some("b2b-saas/products/test".to_string()),
+            public_id: Some("invalid id!".to_string()),
+        };
+        let req_json = web::Json(req_data);
+
+        let response = sign_cloudinary_upload(storage_data.clone(), req_json).await;
+        let resp = response.respond_to(&actix_web::HttpRequest::default());
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    }
 }

@@ -64,3 +64,36 @@ pub async fn metrics_handler() -> impl Responder {
         .content_type(encoder.format_type())
         .body(buffer)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use actix_web::body::to_bytes;
+
+    #[actix_web::test]
+    async fn test_init_and_handler() {
+        // init metrics should register things
+        init_metrics("test-service");
+        
+        // calling again should not panic due to OnceLock
+        init_metrics("test-service");
+
+        // increment an event
+        inc_event("test-service", "stream:orders", "order.created", "success");
+
+        // test the handler
+        let req = actix_web::test::TestRequest::default().to_http_request();
+        let response = metrics_handler().await;
+        let response = response.respond_to(&req);
+        assert_eq!(response.status(), actix_web::http::StatusCode::OK);
+
+        // Verify body contains some prometheus format output
+        let body_bytes = to_bytes(response.into_body()).await.ok().unwrap();
+        let body_str = String::from_utf8(body_bytes.to_vec()).unwrap();
+        
+        // Check if event counter is present in the output
+        assert!(body_str.contains("events_total"));
+        assert!(body_str.contains("test-service"));
+        assert!(body_str.contains("test_service_service_info"));
+    }
+}

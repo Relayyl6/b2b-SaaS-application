@@ -9,7 +9,6 @@ mod protected;
 mod unprotected;
 
 use crate::db::UserRepo;
-use crate::redis_pub::RedisPublisher;
 use actix_web::{App, HttpServer, web};
 use dotenvy::dotenv;
 use redis::Client as RedisClient;
@@ -50,24 +49,27 @@ async fn main() -> std::io::Result<()> {
 
     let repo = web::Data::new(UserRepo::new(pool.clone()));
 
-    let middleware = AuthMiddleware::new(pool.clone(), jwt_secret.clone());
 
     let redis_pub = match &redis_url {
-        Some(url) => match RedisPublisher::new(url).await {
+        Some(url) => match platform::streams::StreamPublisher::new(url) {
             Ok(pubw) => web::Data::new(pubw),
             Err(e) => {
                 eprintln!("⚠️ Failed to connect to Redis: {:?}", e);
                 eprintln!("⚠️ Continuing without Redis publishing capabilities...");
-                web::Data::new(RedisPublisher::new_noop())
+                web::Data::new(platform::streams::StreamPublisher::noop())
             }
         },
         None => {
             eprintln!("⚠️ No REDIS_URL configured — using no-op publisher");
-            web::Data::new(RedisPublisher::new_noop())
+            web::Data::new(platform::streams::StreamPublisher::noop())
         }
     };
 
-    let redis_client = web::Data::new(RedisClient::open(redis_url.unwrap()).expect("redis client"));
+    let redis_url_str = redis_url.clone().unwrap_or_else(|| "redis://127.0.0.1:6379".to_string());
+    let redis_client_inner = RedisClient::open(redis_url_str).expect("redis client");
+    let redis_client = web::Data::new(redis_client_inner.clone());
+
+    let middleware = AuthMiddleware::new(pool.clone(), jwt_secret.clone(), Some(redis_client_inner));
 
     tracing::info!("User Management Service listening on 0.0.0.0:{}", port);
 
@@ -86,6 +88,15 @@ async fn main() -> std::io::Result<()> {
                     .route(
                         "/delete/{id}",
                         web::delete().to(protected_handlers::delete_user_handler),
+                    ),
+            )
+            .service(
+                web::scope("/admin")
+                    .wrap(middleware::rbac::RequireRole::new(vec![models::UserRole::Admin]))
+                    .wrap(middleware.clone())
+                    .route(
+                        "/stats",
+                        web::get().to(protected_handlers::admin_stats_handler),
                     ),
             )
             // other unprotected routes outside the scope
@@ -108,6 +119,18 @@ async fn main() -> std::io::Result<()> {
             .route(
                 "/auth/validate",
                 web::get().to(unprotected_handlers::validate_token),
+            )
+            .route(
+                "/forgot-password",
+                web::post().to(unprotected_handlers::forgot_password),
+            )
+            .route(
+                "/reset-password",
+                web::post().to(unprotected_handlers::reset_password),
+            )
+            .route(
+                "/verify-email",
+                web::post().to(unprotected_handlers::verify_email),
             )
             .route("/metrics", web::get().to(metrics::metrics_handler))
     })

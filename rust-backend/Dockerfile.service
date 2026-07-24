@@ -1,4 +1,4 @@
-FROM rust:latest AS builder
+FROM rust:1.80 AS builder
 WORKDIR /app
 COPY . .
 ARG PACKAGE
@@ -6,7 +6,10 @@ RUN cargo build --release -p ${PACKAGE}
 
 FROM debian:bookworm-slim
 RUN apt-get update && apt-get install -y ca-certificates && rm -rf /var/lib/apt/lists/*
+RUN useradd -m -s /bin/bash appuser
 WORKDIR /app
 ARG BINARY
 COPY --from=builder /app/target/release/${BINARY} /usr/local/bin/service
+RUN chown -R appuser:appuser /app && chmod +x /usr/local/bin/service
+USER appuser
 CMD ["service"]

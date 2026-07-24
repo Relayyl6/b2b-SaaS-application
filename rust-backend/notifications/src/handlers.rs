@@ -3,7 +3,7 @@ use uuid::Uuid;
 
 use crate::db::NotificationRepo;
 use crate::models::{
-    CreateNotificationRequest, ListNotificationsQuery, NotificationChannel, RegisterDeviceRequest,
+    CreateNotificationRequest, ListNotificationsQuery, NotificationChannel, RegisterDeviceRequest, UpdatePreferencesRequest,
 };
 use crate::provider::NotificationProvider;
 
@@ -89,6 +89,12 @@ pub async fn create_notification(
                 },
             }
         }
+        Err(sqlx::Error::Protocol(msg)) if msg.contains("opted out") => {
+            HttpResponse::Accepted().json(serde_json::json!({
+                "status": "skipped",
+                "message": msg
+            }))
+        }
         Err(e) => HttpResponse::InternalServerError().body(format!("db error: {e}")),
     }
 }
@@ -152,6 +158,27 @@ pub async fn disable_device(
     match repo.disable_device(path.into_inner()).await {
         Ok(device) => HttpResponse::Ok().json(device),
         Err(sqlx::Error::RowNotFound) => HttpResponse::NotFound().body("device not found"),
+        Err(e) => HttpResponse::InternalServerError().body(format!("db error: {e}")),
+    }
+}
+
+pub async fn get_preferences(
+    repo: web::Data<NotificationRepo>,
+    path: web::Path<Uuid>,
+) -> impl Responder {
+    match repo.get_preferences(path.into_inner()).await {
+        Ok(prefs) => HttpResponse::Ok().json(prefs),
+        Err(e) => HttpResponse::InternalServerError().body(format!("db error: {e}")),
+    }
+}
+
+pub async fn update_preferences(
+    repo: web::Data<NotificationRepo>,
+    path: web::Path<Uuid>,
+    req: web::Json<UpdatePreferencesRequest>,
+) -> impl Responder {
+    match repo.update_preferences(path.into_inner(), &req).await {
+        Ok(prefs) => HttpResponse::Ok().json(prefs),
         Err(e) => HttpResponse::InternalServerError().body(format!("db error: {e}")),
     }
 }

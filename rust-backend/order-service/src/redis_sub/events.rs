@@ -1,200 +1,95 @@
 use crate::models::OrderEvent;
-use reqwest::Client;
-use serde_json;
+use crate::redis_pub::RedisPublisher;
 use sqlx::PgPool;
-use std::env;
 
 pub async fn update_order_failed_event(
-    _pool: &PgPool,
+    pool: &PgPool,
+    _redis_pub: &RedisPublisher, // Not emitting another event for failed here
     event: OrderEvent,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let client = Client::new();
-    let service_url =
-        env::var("ORDER_SERVICE_URL").unwrap_or_else(|_| "http://localhost:3005".into());
-    let url = match event.order_id {
-        Some(id) => format!("{}/orders/{}/status", service_url, id),
-        None => {
-            eprintln!("No order_id found, cannot create URL");
-            return Ok(()); // or skip this event
-        }
-    };
-
-    let resp = client
-        .put(&url)
-        .json(&serde_json::json!({
-            "id": event.order_id,
-            "product_id": event.product_id,
-            "user_id": event.user_id,
-            "new_status": "Failed".to_string(),
-            "order_timestamp": event.order_timestamp,
-        }))
-        .send()
-        .await?;
-
-    if resp.status().is_success() {
-        println!(
-            "🔁({}) Updated order {:?} via API route",
-            event.event_type, event.order_id
-        );
-    } else {
-        eprintln!("❌ Failed to update product: {:?}", resp.text().await?);
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let order_id = event.order_id.ok_or("No order_id found")?;
+    match crate::db::update_order_status_db(pool, order_id, crate::models::OrderStatus::Failed, None, None, None).await {
+        Ok(_) => println!("🔁({}) Updated order {:?} via DB", event.event_type, order_id),
+        Err(e) => eprintln!("❌ Failed to update order status: {:?}", e),
     }
-
     Ok(())
 }
 
 pub async fn update_order_confirmed_event(
-    _pool: &PgPool,
+    pool: &PgPool,
+    _redis_pub: &RedisPublisher,
     event: OrderEvent,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let client = Client::new();
-    let service_url =
-        env::var("ORDER_SERVICE_URL").unwrap_or_else(|_| "http://localhost:3005".into());
-    let url = match event.order_id {
-        Some(id) => format!("{}/orders/{}/status", service_url, id),
-        None => {
-            eprintln!("No order_id found, cannot create URL");
-            return Ok(()); // or skip this event
-        }
-    };
-
-    let resp = client
-        .put(&url)
-        .json(&serde_json::json!({
-            "id": event.order_id,
-            "product_id": event.product_id,
-            "user_id": event.user_id,
-            "new_status": "Confirmed".to_string(),
-            "order_timestamp": event.order_timestamp,
-        }))
-        .send()
-        .await?;
-
-    if resp.status().is_success() {
-        println!(
-            "🔁({}) Updated order {:?} via API route",
-            event.event_type, event.order_id
-        );
-    } else {
-        eprintln!("❌ Failed to update product: {:?}", resp.text().await?);
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let order_id = event.order_id.ok_or("No order_id found")?;
+    match crate::db::update_order_status_db(pool, order_id, crate::models::OrderStatus::Confirmed, None, None, None).await {
+        Ok(_) => println!("🔁({}) Updated order {:?} via DB", event.event_type, order_id),
+        Err(e) => eprintln!("❌ Failed to update order status: {:?}", e),
     }
-
     Ok(())
 }
 
 pub async fn update_order_cancelled_event(
-    _pool: &PgPool,
+    pool: &PgPool,
+    redis_pub: &RedisPublisher,
     event: OrderEvent,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let client = Client::new();
-    let service_url =
-        env::var("ORDER_SERVICE_URL").unwrap_or_else(|_| "http://localhost:3005".into());
-    let url = match event.order_id {
-        Some(id) => format!("{}/orders/{}/status", service_url, id),
-        None => {
-            eprintln!("No order_id found, cannot create URL");
-            return Ok(()); // or skip this event
-        }
-    };
-
-    let resp = client
-        .put(&url)
-        .json(&serde_json::json!({
-            "id": event.order_id,
-            "product_id": event.product_id,
-            "user_id": event.user_id,
-            "new_status": "Cancelled".to_string(),
-            "order_timestamp": event.order_timestamp,
-        }))
-        .send()
-        .await?;
-
-    if resp.status().is_success() {
-        println!(
-            "🔁({}) Updated order {:?} via API route",
-            event.event_type, event.order_id
-        );
-    } else {
-        eprintln!("❌ Failed to update product: {:?}", resp.text().await?);
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let order_id = event.order_id.ok_or("No order_id found")?;
+    match crate::db::update_order_status_db(pool, order_id, crate::models::OrderStatus::Cancelled, None, None, None).await {
+        Ok(order) => {
+            println!("🔁({}) Updated order {:?} via DB", event.event_type, order_id);
+            let cancel_event = OrderEvent {
+                event_type: "order.cancelled".to_string(),
+                product_id: order.product_id,
+                supplier_id: order.supplier_id,
+                order_id: Some(order.id),
+                quantity: order.qty,
+                user_id: Some(order.user_id),
+                timestamp: order.order_timestamp,
+                ..Default::default()
+            };
+            redis_pub.publish_async("order.cancelled", cancel_event);
+        },
+        Err(e) => eprintln!("❌ Failed to update order status: {:?}", e),
     }
-
     Ok(())
 }
 
 pub async fn update_order_shipped_event(
-    _pool: &PgPool,
+    pool: &PgPool,
+    redis_pub: &RedisPublisher,
     event: OrderEvent,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let client = Client::new();
-    let service_url =
-        env::var("ORDER_SERVICE_URL").unwrap_or_else(|_| "http://localhost:3005".into());
-    let url = match event.order_id {
-        Some(id) => format!("{}/orders/{}/status", service_url, id),
-        None => {
-            eprintln!("No order_id found, cannot create URL");
-            return Ok(()); // or skip this event
-        }
-    };
-
-    let resp = client
-        .put(&url)
-        .json(&serde_json::json!({
-            "id": event.order_id,
-            "product_id": event.product_id,
-            "user_id": event.user_id,
-            "new_status": "Shipped".to_string(),
-            "order_timestamp": event.order_timestamp,
-        }))
-        .send()
-        .await?;
-
-    if resp.status().is_success() {
-        println!(
-            "🔁({}) Updated order {:?} via API route",
-            event.event_type, event.order_id
-        );
-    } else {
-        eprintln!("❌ Failed to update product: {:?}", resp.text().await?);
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let order_id = event.order_id.ok_or("No order_id found")?;
+    match crate::db::update_order_status_db(pool, order_id, crate::models::OrderStatus::Shipped, None, None, None).await {
+        Ok(order) => {
+            println!("🔁({}) Updated order {:?} via DB", event.event_type, order_id);
+            let shipped_event = OrderEvent {
+                event_type: "order.shipped".to_string(),
+                product_id: order.product_id,
+                supplier_id: order.supplier_id,
+                order_id: Some(order.id),
+                quantity: order.qty,
+                user_id: Some(order.user_id),
+                timestamp: order.order_timestamp,
+                ..Default::default()
+            };
+            redis_pub.publish_async("order.shipped", shipped_event);
+        },
+        Err(e) => eprintln!("❌ Failed to update order status: {:?}", e),
     }
-
     Ok(())
 }
 
 pub async fn update_order_delivered_event(
-    _pool: &PgPool,
+    pool: &PgPool,
+    _redis_pub: &RedisPublisher,
     event: OrderEvent,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let client = Client::new();
-    let service_url =
-        env::var("ORDER_SERVICE_URL").unwrap_or_else(|_| "http://localhost:3005".into());
-    let url = match event.order_id {
-        Some(id) => format!("{}/orders/{}/status", service_url, id),
-        None => {
-            eprintln!("No order_id found, cannot create URL");
-            return Ok(()); // or skip this event
-        }
-    };
-
-    let resp = client
-        .put(&url)
-        .json(&serde_json::json!({
-            "id": event.order_id,
-            "product_id": event.product_id,
-            "user_id": event.user_id,
-            "new_status": "Delivered".to_string(),
-            "order_timestamp": event.order_timestamp,
-        }))
-        .send()
-        .await?;
-
-    if resp.status().is_success() {
-        println!(
-            "🔁({}) Updated order {:?} via API route",
-            event.event_type, event.order_id
-        );
-    } else {
-        eprintln!("❌ Failed to update product: {:?}", resp.text().await?);
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let order_id = event.order_id.ok_or("No order_id found")?;
+    match crate::db::update_order_status_db(pool, order_id, crate::models::OrderStatus::Delivered, None, None, None).await {
+        Ok(_) => println!("🔁({}) Updated order {:?} via DB", event.event_type, order_id),
+        Err(e) => eprintln!("❌ Failed to update order status: {:?}", e),
     }
-
     Ok(())
 }
+

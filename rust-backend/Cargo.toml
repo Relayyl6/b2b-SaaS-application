@@ -1,7 +1,7 @@
 [workspace]
 resolver = "2"
 members = [
-    "analytics",
+    "analytics", "e2e-tests",
     "inventory-management",
     "logistics",
     "notifications",
@@ -11,6 +11,7 @@ members = [
     "product-catalog",
     "supplier-management",
     "user-management",
+    "e2e-tests", "gateway-tests",
 ]
 
 [workspace.package]
@@ -31,7 +32,7 @@ actix-rt = "2"
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 
 # Database
-sqlx = { version = "0.7", features = ["runtime-tokio-rustls", "postgres", "uuid", "chrono"] }
+sqlx = { version = "0.7", features = ["runtime-tokio-native-tls", "postgres", "uuid", "chrono"] }
 chrono = { version = "0.4", features = ["serde", "clock"] }
 
 # Serialisation
@@ -48,20 +49,23 @@ dotenvy = "0.15"
 redis = { version = "0.25", features = ["aio", "tokio-comp"] }
 
 # Message queue (RabbitMQ)
-lapin = { version = "3.7.1", features = ["rustls"] }
+lapin = { version = "3.7.1", default-features = false, features = ["native-tls"] }
 
 # Logging / tracing
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
 
 # HTTP client
-reqwest = { version = "0.12", features = ["json"] }
+reqwest = { version = "0.12.5", features = ["json"] }
 
 # Error handling
 thiserror = "2"
 
 # Async utilities
-futures-util = "0.3"
+futures-util = "0.3.30"
+hmac = "0.12.1"
+sha2 = "0.10.8"
+hex = "0.4.3"
 
 # Observability (OpenTelemetry + Prometheus) — used directly only in platform
 opentelemetry = "0.27"
@@ -76,7 +80,7 @@ jsonwebtoken = { version = "10.2.0", features = ["rust_crypto"] }
 
 # Misc (service-specific but versioned here for consistency)
 sha1 = "0.10"
-tokio-rustls = "0.26"
+tokio-native-tls = "0.3"
 futures = "0.3"
 
 # Internal crates

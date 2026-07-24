@@ -1,6 +1,6 @@
 use crate::models::{
     CreateNotificationRequest, ListNotificationsQuery, Notification, NotificationDevice,
-    RegisterDeviceRequest,
+    RegisterDeviceRequest, UserPreference, UpdatePreferencesRequest, NotificationChannel
 };
 use chrono::Utc;
 use sqlx::{Postgres, QueryBuilder};
@@ -20,6 +20,21 @@ impl NotificationRepo {
         &self,
         req: &CreateNotificationRequest,
     ) -> Result<Notification, sqlx::Error> {
+        if let Some(user_id) = req.user_id {
+            if let Ok(prefs) = self.get_preferences(user_id).await {
+                let is_enabled = match req.channel {
+                    NotificationChannel::Email => prefs.email_enabled,
+                    NotificationChannel::Sms => prefs.sms_enabled,
+                    NotificationChannel::Push => prefs.push_enabled,
+                    NotificationChannel::InApp => prefs.in_app_enabled,
+                };
+
+                if !is_enabled {
+                    return Err(sqlx::Error::Protocol("User opted out of this channel".to_string().into()));
+                }
+            }
+        }
+
         let event_type = req
             .event_type
             .clone()
@@ -226,5 +241,98 @@ impl NotificationRepo {
         .bind(id)
         .fetch_one(&self.pool)
         .await
+    }
+
+    pub async fn get_preferences(&self, user_id: Uuid) -> Result<UserPreference, sqlx::Error> {
+        sqlx::query_as::<_, UserPreference>(
+            r#"
+            SELECT * FROM notification_preferences WHERE user_id = $1
+            "#,
+        )
+        .bind(user_id)
+        .fetch_optional(&self.pool)
+        .await
+        .map(|opt| opt.unwrap_or_else(|| UserPreference {
+            user_id,
+            email_enabled: true,
+            sms_enabled: true,
+            push_enabled: true,
+            in_app_enabled: true,
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+        }))
+    }
+
+    pub async fn update_preferences(
+        &self,
+        user_id: Uuid,
+        req: &UpdatePreferencesRequest,
+    ) -> Result<UserPreference, sqlx::Error> {
+        sqlx::query_as::<_, UserPreference>(
+            r#"
+            INSERT INTO notification_preferences (user_id, email_enabled, sms_enabled, push_enabled, in_app_enabled)
+            VALUES ($1, COALESCE($2, true), COALESCE($3, true), COALESCE($4, true), COALESCE($5, true))
+            ON CONFLICT (user_id) DO UPDATE SET
+                email_enabled = COALESCE($2, notification_preferences.email_enabled),
+                sms_enabled = COALESCE($3, notification_preferences.sms_enabled),
+                push_enabled = COALESCE($4, notification_preferences.push_enabled),
+                in_app_enabled = COALESCE($5, notification_preferences.in_app_enabled),
+                updated_at = NOW()
+            RETURNING *
+            "#,
+        )
+        .bind(user_id)
+        .bind(req.email_enabled)
+        .bind(req.sms_enabled)
+        .bind(req.push_enabled)
+        .bind(req.in_app_enabled)
+        .fetch_one(&self.pool)
+        .await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::models::{NotificationChannel, NotificationPriority};
+    use uuid::Uuid;
+
+    #[sqlx::test]
+    async fn test_preference_filtering_prevents_disabled_channel(pool: sqlx::PgPool) {
+        let repo = NotificationRepo::new(pool);
+        let user_id = Uuid::new_v4();
+
+        // 1. Opt out of Email
+        let update_req = UpdatePreferencesRequest {
+            email_enabled: Some(false),
+            sms_enabled: Some(true),
+            push_enabled: Some(true),
+            in_app_enabled: Some(true),
+        };
+        let _ = repo.update_preferences(user_id, &update_req).await;
+
+        // 2. Try to create Email notification
+        let req = CreateNotificationRequest {
+            user_id: Some(user_id),
+            supplier_id: None,
+            order_id: None,
+            event_type: None,
+            channel: NotificationChannel::Email,
+            priority: Some(NotificationPriority::Normal),
+            recipient: None,
+            subject: None,
+            body: "Test".to_string(),
+            payload: None,
+        };
+
+        let result = repo.create(&req).await;
+        
+        // 3. Verify it was rejected
+        assert!(result.is_err());
+        if let Err(sqlx::Error::Protocol(msg)) = result {
+            assert!(msg.to_string().contains("User opted out"));
+        } else {
+            panic!("Expected Protocol error due to preference filtering");
+        }
     }
 }

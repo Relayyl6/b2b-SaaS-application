@@ -32,7 +32,7 @@ pub async fn listen_to_redis_events(
     pool: PgPool,
     repo: Data<InventoryRepo>,
     redis_pub: Data<RedisPublisher>,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let redis_url = env::var("REDIS_URL").map_err(|_| "REDIS_URL must be set in environment")?;
     let consumer = env::var("CONSUMER_NAME").unwrap_or_else(|_| "inventory-1".to_string());
 
@@ -48,7 +48,7 @@ pub async fn listen_to_redis_events(
             async move {
                 let event_type = envelope.event_type.clone();
                 let event = envelope.payload;
-                let result: Result<(), Box<dyn std::error::Error>> = match event_type.as_str() {
+                let result: Result<(), Box<dyn std::error::Error + Send + Sync>> = match event_type.as_str() {
                     "product.created" => create_product_from_event(&pool, event).await,
                     "product.updated" => update_product_from_event(&pool, event).await,
                     "product.deleted" => delete_product_from_event(&pool, event).await,
@@ -80,7 +80,9 @@ pub async fn listen_to_redis_events(
                 );
                 if let Err(e) = result {
                     eprintln!("inventory stream handler failed for {event_type}: {e:?}");
+                    return Err(e);
                 }
+                Ok(())
             }
         },
     )

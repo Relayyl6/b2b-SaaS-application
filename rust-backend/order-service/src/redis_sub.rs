@@ -2,6 +2,7 @@
 // Consumes workflow events from Redis Streams and updates order state.
 
 use crate::models::{OrderEvent, OrderStatus};
+use crate::redis_pub::RedisPublisher;
 use platform::metrics;
 use platform::streams;
 use serde_json::Value;
@@ -27,9 +28,13 @@ const EVENTS: &[&str] = &[
     "logistics.shipment_cancelled",
 ];
 
-pub async fn listen_to_redis_events(pool: PgPool) -> Result<(), Box<dyn std::error::Error>> {
+pub async fn listen_to_redis_events(pool: PgPool) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let redis_url = env::var("REDIS_URL").map_err(|_| "REDIS_URL must be set in environment")?;
     let consumer = env::var("CONSUMER_NAME").unwrap_or_else(|_| "order-service-1".to_string());
+    
+    let redis_pub = RedisPublisher::new(&redis_url)
+        .await
+        .map_err(|e| format!("Failed to create RedisPublisher: {}", e))?;
 
     streams::consume_json::<Value, _, _>(
         &redis_url,
@@ -38,9 +43,10 @@ pub async fn listen_to_redis_events(pool: PgPool) -> Result<(), Box<dyn std::err
         EVENTS,
         move |envelope| {
             let pool = pool.clone();
+            let redis_pub = redis_pub.clone();
             async move {
                 let event_type = envelope.event_type.clone();
-                let result = handle_event(&pool, &event_type, envelope.payload).await;
+                let result = handle_event(&pool, &redis_pub, &event_type, envelope.payload).await;
                 metrics::inc_event(
                     "order-service",
                     &envelope.stream,
@@ -49,7 +55,9 @@ pub async fn listen_to_redis_events(pool: PgPool) -> Result<(), Box<dyn std::err
                 );
                 if let Err(e) = result {
                     eprintln!("order-service stream handler failed for {event_type}: {e:?}");
+                    return Err(e);
                 }
+                Ok(())
             }
         },
     )
@@ -58,11 +66,12 @@ pub async fn listen_to_redis_events(pool: PgPool) -> Result<(), Box<dyn std::err
 
 async fn handle_event(
     pool: &PgPool,
+    redis_pub: &RedisPublisher,
     event_type: &str,
     payload: Value,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     if event_type.starts_with("logistics.") {
-        return handle_logistics_event(pool, event_type, payload).await;
+        return handle_logistics_event(pool, redis_pub, event_type, payload).await;
     }
 
     let event: OrderEvent = match serde_json::from_value(payload) {
@@ -71,22 +80,23 @@ async fn handle_event(
     };
 
     match event_type {
-        "inventory.rejected" => update_order_failed_event(pool, event).await,
+        "inventory.rejected" => update_order_failed_event(pool, redis_pub, event).await,
         "inventory.reservation_expired" | "inventory.expired" | "inventory.released" => {
-            update_order_cancelled_event(pool, event).await
+            update_order_cancelled_event(pool, redis_pub, event).await
         }
-        "inventory.reserved" => update_order_confirmed_event(pool, event).await,
-        "inventory.finalized" => update_order_shipped_event(pool, event).await,
-        "order.delivered" => update_order_delivered_event(pool, event).await,
+        "inventory.reserved" => update_order_confirmed_event(pool, redis_pub, event).await,
+        "inventory.finalized" => update_order_shipped_event(pool, redis_pub, event).await,
+        "order.delivered" => update_order_delivered_event(pool, redis_pub, event).await,
         _ => Ok(()),
     }
 }
 
 async fn handle_logistics_event(
     pool: &PgPool,
+    redis_pub: &RedisPublisher,
     event_type: &str,
     value: Value,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let order_id = value
         .get("order_id")
         .and_then(|v| v.as_str())
@@ -109,12 +119,36 @@ async fn handle_logistics_event(
     };
 
     if let Some(status) = status {
-        sqlx::query("UPDATE orders SET status = $1, updated_at = NOW() WHERE id = $2")
-            .bind(status)
-            .bind(order_id)
-            .execute(pool)
-            .await?;
+        if let Ok(order) = crate::db::update_order_status_db(pool, order_id, status.clone(), None, None, None).await {
+            // Replicate side effects
+            if status == OrderStatus::Cancelled {
+                let cancel_event = OrderEvent {
+                    event_type: "order.cancelled".to_string(),
+                    product_id: order.product_id,
+                    supplier_id: order.supplier_id,
+                    order_id: Some(order.id),
+                    quantity: order.qty,
+                    user_id: Some(order.user_id),
+                    timestamp: order.order_timestamp,
+                    ..Default::default()
+                };
+                redis_pub.publish_async("order.cancelled", cancel_event);
+            } else if status == OrderStatus::Shipped {
+                let shipped_event = OrderEvent {
+                    event_type: "order.shipped".to_string(),
+                    product_id: order.product_id,
+                    supplier_id: order.supplier_id,
+                    order_id: Some(order.id),
+                    quantity: order.qty,
+                    user_id: Some(order.user_id),
+                    timestamp: order.order_timestamp,
+                    ..Default::default()
+                };
+                redis_pub.publish_async("order.shipped", shipped_event);
+            }
+        }
     }
 
     Ok(())
 }
+

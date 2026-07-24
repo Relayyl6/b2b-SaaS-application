@@ -119,11 +119,11 @@ impl InventoryRepo {
         supplier_id: Uuid,
         product_id: Uuid,
     ) -> Result<u64, sqlx::Error> {
-        let result = sqlx::query!(
-            "DELETE FROM inventory WHERE supplier_id = $1 AND product_id = $2",
-            supplier_id,
-            product_id
+        let result = sqlx::query(
+            "DELETE FROM inventory WHERE supplier_id = $1 AND product_id = $2"
         )
+        .bind(supplier_id)
+        .bind(product_id)
         .execute(&self.pool)
         .await?;
 

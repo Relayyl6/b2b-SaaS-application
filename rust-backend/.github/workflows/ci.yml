@@ -14,8 +14,8 @@ jobs:
       postgres:
         image: postgres:16-alpine
         env:
-          POSTGRES_USER: postgres
-          POSTGRES_PASSWORD: postgres
+          POSTGRES_USER: ${{ secrets.POSTGRES_USER }}
+          POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
         ports:
           - 5432:5432
         options: >-
@@ -46,54 +46,55 @@ jobs:
 
       - name: Create all service databases
         env:
-          PGPASSWORD: postgres
+          PGPASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
+          PGUSER: ${{ secrets.POSTGRES_USER }}
         run: |
-          psql -h localhost -U postgres -c "CREATE DATABASE analytics_service;"
-          psql -h localhost -U postgres -c "CREATE DATABASE inventory;"
-          psql -h localhost -U postgres -c "CREATE DATABASE logistics;"
-          psql -h localhost -U postgres -c "CREATE DATABASE notifications;"
-          psql -h localhost -U postgres -c "CREATE DATABASE orders;"
-          psql -h localhost -U postgres -c "CREATE DATABASE payments;"
-          psql -h localhost -U postgres -c "CREATE DATABASE products;"
-          psql -h localhost -U postgres -c "CREATE DATABASE suppliers;"
-          psql -h localhost -U postgres -c "CREATE DATABASE users;"
+          psql -h localhost -U $PGUSER -c "CREATE DATABASE analytics_service;"
+          psql -h localhost -U $PGUSER -c "CREATE DATABASE inventory;"
+          psql -h localhost -U $PGUSER -c "CREATE DATABASE logistics;"
+          psql -h localhost -U $PGUSER -c "CREATE DATABASE notifications;"
+          psql -h localhost -U $PGUSER -c "CREATE DATABASE orders;"
+          psql -h localhost -U $PGUSER -c "CREATE DATABASE payments;"
+          psql -h localhost -U $PGUSER -c "CREATE DATABASE products;"
+          psql -h localhost -U $PGUSER -c "CREATE DATABASE suppliers;"
+          psql -h localhost -U $PGUSER -c "CREATE DATABASE users;"
 
       - name: Format
         run: cargo fmt --all -- --check
 
       - name: Clippy — analytics
         env:
-          DATABASE_URL: postgres://postgres:postgres@localhost:5432/analytics_service
+          DATABASE_URL: postgres://${{ secrets.POSTGRES_USER }}:${{ secrets.POSTGRES_PASSWORD }}@localhost:5432/analytics_service
           REDIS_URL: redis://localhost:6379
         run: cargo clippy -p analytics --all-targets -- -D warnings
 
       - name: Clippy — inventory-management
         env:
-          DATABASE_URL: postgres://postgres:postgres@localhost:5432/inventory
+          DATABASE_URL: postgres://${{ secrets.POSTGRES_USER }}:${{ secrets.POSTGRES_PASSWORD }}@localhost:5432/inventory
           REDIS_URL: redis://localhost:6379
         run: cargo clippy -p inventory-service --all-targets -- -D warnings
 
       - name: Clippy — logistics
         env:
-          DATABASE_URL: postgres://postgres:postgres@localhost:5432/logistics
+          DATABASE_URL: postgres://${{ secrets.POSTGRES_USER }}:${{ secrets.POSTGRES_PASSWORD }}@localhost:5432/logistics
           REDIS_URL: redis://localhost:6379
         run: cargo clippy -p logistics --all-targets -- -D warnings
 
       - name: Clippy — notifications
         env:
-          DATABASE_URL: postgres://postgres:postgres@localhost:5432/notifications
+          DATABASE_URL: postgres://${{ secrets.POSTGRES_USER }}:${{ secrets.POSTGRES_PASSWORD }}@localhost:5432/notifications
           REDIS_URL: redis://localhost:6379
         run: cargo clippy -p notifications --all-targets -- -D warnings
 
       - name: Clippy — order-service
         env:
-          DATABASE_URL: postgres://postgres:postgres@localhost:5432/orders
+          DATABASE_URL: postgres://${{ secrets.POSTGRES_USER }}:${{ secrets.POSTGRES_PASSWORD }}@localhost:5432/orders
           REDIS_URL: redis://localhost:6379
         run: cargo clippy -p order-service --all-targets -- -D warnings
 
       - name: Clippy — payments
         env:
-          DATABASE_URL: postgres://postgres:postgres@localhost:5432/payments
+          DATABASE_URL: postgres://${{ secrets.POSTGRES_USER }}:${{ secrets.POSTGRES_PASSWORD }}@localhost:5432/payments
           REDIS_URL: redis://localhost:6379
         run: cargo clippy -p payments --all-targets -- -D warnings
 
@@ -102,24 +103,24 @@ jobs:
 
       - name: Clippy — product-catalog
         env:
-          DATABASE_URL: postgres://postgres:postgres@localhost:5432/products
+          DATABASE_URL: postgres://${{ secrets.POSTGRES_USER }}:${{ secrets.POSTGRES_PASSWORD }}@localhost:5432/products
           REDIS_URL: redis://localhost:6379
         run: cargo clippy -p product-catalog --all-targets -- -D warnings
 
       - name: Clippy — supplier-management
         env:
-          DATABASE_URL: postgres://postgres:postgres@localhost:5432/suppliers
+          DATABASE_URL: postgres://${{ secrets.POSTGRES_USER }}:${{ secrets.POSTGRES_PASSWORD }}@localhost:5432/suppliers
           REDIS_URL: redis://localhost:6379
         run: cargo clippy -p supplier-management --all-targets -- -D warnings
 
       - name: Clippy — user-management
         env:
-          DATABASE_URL: postgres://postgres:postgres@localhost:5432/users
+          DATABASE_URL: postgres://${{ secrets.POSTGRES_USER }}:${{ secrets.POSTGRES_PASSWORD }}@localhost:5432/users
           REDIS_URL: redis://localhost:6379
         run: cargo clippy -p user-management --all-targets -- -D warnings
 
       - name: Test
         env:
-          DATABASE_URL: postgres://postgres:postgres@localhost:5432/inventory
+          DATABASE_URL: postgres://${{ secrets.POSTGRES_USER }}:${{ secrets.POSTGRES_PASSWORD }}@localhost:5432/inventory
           REDIS_URL: redis://localhost:6379
         run: cargo test --workspace

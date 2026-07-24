@@ -128,3 +128,22 @@ pub struct RegisterDeviceRequest {
     pub device_id: Option<String>,
     pub app_version: Option<String>,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+pub struct UserPreference {
+    pub user_id: Uuid,
+    pub email_enabled: bool,
+    pub sms_enabled: bool,
+    pub push_enabled: bool,
+    pub in_app_enabled: bool,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct UpdatePreferencesRequest {
+    pub email_enabled: Option<bool>,
+    pub sms_enabled: Option<bool>,
+    pub push_enabled: Option<bool>,
+    pub in_app_enabled: Option<bool>,
+}

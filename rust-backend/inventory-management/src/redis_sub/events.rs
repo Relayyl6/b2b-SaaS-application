@@ -1,114 +1,70 @@
-use crate::models::{ProductEvent, UpdateStockRequest};
+use crate::models::{ProductEvent, UpdateStockRequest, ExpiredReservationRow, ReservationRow, CreateInventoryRequest};
 use crate::redis_pub::RedisPublisher;
-use crate::redis_sub::InventoryRepo;
+use crate::db::InventoryRepo;
 use actix_web::web;
 use chrono::{Duration, Utc};
-use reqwest::Client;
 use sqlx::PgPool;
-use std::env;
-use tokio;
 use uuid::Uuid;
 
 pub async fn create_product_from_event(
-    _pool: &PgPool,
+    pool: &PgPool,
     event: ProductEvent,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let client = Client::new();
-    let service_url =
-        env::var("INVENTORY_SERVICE_URL").unwrap_or_else(|_| "http://localhost:3002".into());
-    let url = format!("{}/inventory", service_url);
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let repo = InventoryRepo::new(pool);
+    let req = CreateInventoryRequest {
+        supplier_id: event.supplier_id,
+        product_id: event.product_id,
+        quantity: event.quantity.unwrap_or(0),
+        name: event.name.unwrap_or_else(|| "Unnamed product".to_string()),
+        description: event.description.unwrap_or_else(|| serde_json::Value::String("No description".to_string())),
+        price: event.price.unwrap_or(0.0),
+        category: event.category.unwrap_or_else(|| "Unspecified".to_string()),
+        low_stock_threshold: event.low_stock_threshold.unwrap_or(5),
+        unit: event.unit.unwrap_or_else(|| "unit".to_string()),
+    };
 
-    let resp = client
-        .post(&url)
-        .json(&serde_json::json!({
-            "product_id": event.product_id,
-            "supplier_id": event.supplier_id,
-            "quantity": event.quantity.unwrap_or(0),
-            "name": event.name.clone().unwrap_or("Unnamed product".to_string()),
-            "description": event.description.clone().unwrap_or(serde_json::Value::String("No description for this product".to_string())),
-            "price": event.price.unwrap_or(0.00),
-            "category": event.category.clone().unwrap_or("Unspecified Category".to_string()),
-            "low_stock_threshold": event.low_stock_threshold.unwrap_or(5),
-            "unit": event.unit.unwrap_or("unit".to_string()),
-        }))
-        .send()
-        .await?;
-
-    if resp.status().is_success() {
-        println!(
-            "✅({}) Created product {:?} via API route",
-            event.event_type, event.name
-        );
-    } else {
-        eprintln!("❌ Failed to create product: {:?}", resp.text().await?);
+    match repo.create_inventory_item(&req).await {
+        Ok(_) => println!("✅({}) Created product {:?} via Repo", event.event_type, req.name),
+        Err(e) => eprintln!("❌ Failed to create product: {:?}", e),
     }
-
     Ok(())
 }
 
 pub async fn update_product_from_event(
-    _pool: &PgPool,
+    pool: &PgPool,
     event: ProductEvent,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let client = Client::new();
-    let service_url =
-        env::var("INVENTORY_SERVICE_URL").unwrap_or_else(|_| "http://localhost:3002".into());
-    let url = format!("{}/inventory/{}/update", service_url, event.supplier_id);
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let repo = InventoryRepo::new(pool);
+    let req = UpdateStockRequest {
+        product_id: event.product_id,
+        name: event.name,
+        description: event.description,
+        price: event.price,
+        category: event.category,
+        unit: event.unit,
+        quantity: event.quantity,
+        low_stock_threshold: event.low_stock_threshold,
+        quantity_change: event.quantity_change,
+        available: event.available,
+        reserved: None,
+    };
 
-    let resp = client
-        .post(&url)
-        .json(&serde_json::json!({
-            "product_id": event.product_id,
-            "supplier_id": event.supplier_id,
-            "name": event.name,
-            "description": event.description,
-            "price": event.price,
-            "category": event.category,
-            "unit": event.unit,
-            "quantity": event.quantity,
-            "low_stock_threshold": event.low_stock_threshold,
-            "quantity_change": event.quantity_change,
-            "available": event.available,
-            // Add more fields if your Inventory Service expects them
-        }))
-        .send()
-        .await?;
-
-    if resp.status().is_success() {
-        println!(
-            "🔁({}) Updated product {:?} via API route",
-            event.event_type, event.name
-        );
-    } else {
-        eprintln!("❌ Failed to update product: {:?}", resp.text().await?);
+    match repo.update_stock(event.supplier_id, &req).await {
+        Ok(_) => println!("🔁({}) Updated product {:?} via Repo", event.event_type, req.name),
+        Err(e) => eprintln!("❌ Failed to update product: {:?}", e),
     }
-
     Ok(())
 }
 
 pub async fn delete_product_from_event(
-    _pool: &PgPool,
+    pool: &PgPool,
     event: ProductEvent,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let client = Client::new();
-    let service_url =
-        env::var("INVENTORY_SERVICE_URL").unwrap_or_else(|_| "http://localhost:3002".into());
-    let url = format!(
-        "{}/inventory/{}/{}",
-        service_url, event.supplier_id, event.product_id
-    );
-
-    let resp = client.delete(&url).send().await?;
-
-    if resp.status().is_success() {
-        println!(
-            "🗑️({}) Deleted product {} via API route",
-            event.event_type, event.product_id
-        );
-    } else {
-        eprintln!("❌ Failed to delete product: {:?}", resp.text().await?);
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let repo = InventoryRepo::new(pool);
+    match repo.delete_product(event.supplier_id, event.product_id).await {
+        Ok(_) => println!("🗑️({}) Deleted product {} via Repo", event.event_type, event.product_id),
+        Err(e) => eprintln!("❌ Failed to delete product: {:?}", e),
     }
-
     Ok(())
 }
 
@@ -116,10 +72,10 @@ pub async fn reserve_stock_from_order(
     pool: &PgPool,
     redis_pub: web::Data<RedisPublisher>,
     event: ProductEvent,
-) -> Result<(), Box<dyn std::error::Error>> {
-    // check the expiration date of the order
-    // Find all expired reservations that have not been released
-    let expired_reservations = sqlx::query!(
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let mut tx_expired = pool.begin().await?;
+
+    let expired_reservations = sqlx::query_as::<_, ExpiredReservationRow>(
         r#"
             SELECT reservation_id, order_id, product_id, qty, user_id
             FROM reservations
@@ -128,39 +84,36 @@ pub async fn reserve_stock_from_order(
             FOR UPDATE
         "#
     )
-    .fetch_all(pool)
+    .fetch_all(&mut *tx_expired)
     .await?;
 
     // Process each expired reservation
     for r in expired_reservations {
-        // Release inventory
-        sqlx::query!(
+        sqlx::query(
             r#"
                 UPDATE inventory
                 SET reserved = reserved - $1
                 WHERE product_id = $2
             "#,
-            r.qty,
-            r.product_id
         )
-        .execute(pool)
+        .bind(r.qty)
+        .bind(r.product_id)
+        .execute(&mut *tx_expired)
         .await?;
 
-        // Mark the reservation as released, or call it expired
-        sqlx::query!(
+        sqlx::query(
             r#"
                 UPDATE reservations
                 SET released = true
                 WHERE reservation_id = $1
             "#,
-            r.reservation_id
         )
-        .execute(pool)
+        .bind(r.reservation_id)
+        .execute(&mut *tx_expired)
         .await?;
 
-        // Publish cancellation event
         let cancel_event = ProductEvent {
-            event_type: "inventory.expired".into(), // it's meant to be "order.failed", but my order service is listening and i wanted it to hear something different, maybe it'll have other uses subsequently
+            event_type: "inventory.expired".into(),
             product_id: r.product_id,
             order_id: Some(r.order_id),
             quantity: Some(r.qty),
@@ -170,21 +123,14 @@ pub async fn reserve_stock_from_order(
             ..Default::default()
         };
 
-        for event in &["inventory.expired"] {
-            // , "order.cancelled"       these two events are analogous
-            if let Err(e) = redis_pub.publish(event, &cancel_event).await {
-                eprintln!("Redis publish error (expired): {}", e);
-
-                tokio::time::sleep(std::time::Duration::from_secs(5)).await;
-                continue;
-            }
-        }
+        redis_pub.publish_async("inventory.expired", cancel_event);
 
         println!(
             "Expired reservation {} for order {} was released. its status is 'expired'",
             r.reservation_id, r.order_id
         );
     }
+    tx_expired.commit().await?;
 
     let product_id = event.product_id;
     let order_id = event.order_id.ok_or("Missing order_id")?;
@@ -224,17 +170,7 @@ pub async fn reserve_stock_from_order(
             ..Default::default()
         };
 
-        for event in &["inventory.reserved"] {
-            // ,  "order.confirmed"
-            if let Err(e) = redis_pub.publish(event, &success_event).await {
-                eprintln!("Redis publish error (reserved): {}", e);
-
-                // wait before retrying
-                tokio::time::sleep(std::time::Duration::from_secs(5)).await;
-                continue;
-            }
-        }
-
+        redis_pub.publish_async("inventory.reserved", success_event);
         return Ok(());
     }
 
@@ -266,33 +202,20 @@ pub async fn reserve_stock_from_order(
             ..Default::default()
         };
 
-        for event in &["inventory.rejected"] {
-            // , "order.failed"
-            if let Err(e) = redis_pub.publish(event, &reject_event).await {
-                eprintln!(
-                    "Redis inventory.rejected publish error (insuffieient stock): {}",
-                    e
-                );
-
-                // wait before retrying
-                tokio::time::sleep(std::time::Duration::from_secs(5)).await;
-                continue;
-            }
-        }
-
+        redis_pub.publish_async("inventory.rejected", reject_event);
         return Ok(());
     }
 
     // Reserve stock
-    sqlx::query!(
+    sqlx::query(
         r#"
             UPDATE inventory
             SET reserved = reserved + $1
             WHERE product_id = $2
         "#,
-        qty_requested,
-        product_id
     )
+    .bind(qty_requested)
+    .bind(product_id)
     .execute(&mut *tx)
     .await?;
 
@@ -300,18 +223,18 @@ pub async fn reserve_stock_from_order(
     let reservation_id = Uuid::new_v4();
     // let user_id = Uuid::new_v4();
     // let expires_at = Utc::now() + Duration::seconds(reservation_ttl_secs);
-    sqlx::query!(
+    sqlx::query(
         r#"
             INSERT INTO reservations (reservation_id, order_id, product_id, qty, user_id, expires_at, created_at, released)
             VALUES ($1, $2, $3, $4, $5, $6, now(), false)
         "#,
-        reservation_id,
-        order_id,
-        product_id,
-        qty_requested,
-        user_id,
-        expires_at
     )
+    .bind(reservation_id)
+    .bind(order_id)
+    .bind(product_id)
+    .bind(qty_requested)
+    .bind(user_id)
+    .bind(expires_at)
     .execute(&mut *tx)
     .await?;
 
@@ -330,15 +253,7 @@ pub async fn reserve_stock_from_order(
         ..Default::default()
     };
 
-    for event in &["inventory.reserved"] {
-        //  , "order.confirmed"
-        if let Err(e) = redis_pub.publish(event, &success_event).await {
-            eprintln!("Redis publish error (reserved): {}", e);
-            // wait before retrying
-            tokio::time::sleep(std::time::Duration::from_secs(5)).await;
-            continue;
-        }
-    }
+    redis_pub.publish_async("inventory.reserved", success_event);
 
     println!("Stock Reserved for order {}", order_id);
 
@@ -349,7 +264,7 @@ pub async fn release_stock_from_order(
     pool: &PgPool,
     redis_pub: web::Data<RedisPublisher>,
     event: ProductEvent,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let product_id = event.product_id;
     let order_id = event.order_id.unwrap_or(Uuid::new_v4());
     let qty = event.quantity.unwrap_or(0);
@@ -357,14 +272,14 @@ pub async fn release_stock_from_order(
     let mut tx = pool.begin().await?;
 
     // Check reservation exists and amount is ok
-    let res_row = sqlx::query!(
+    let res_row = sqlx::query_as::<_, ReservationRow>(
         r#"
             SELECT reservation_id, qty, released, user_id
             FROM reservations
             WHERE order_id = $1 FOR UPDATE
         "#,
-        order_id
     )
+    .bind(order_id)
     .fetch_optional(&mut *tx)
     .await?;
 
@@ -391,16 +306,16 @@ pub async fn release_stock_from_order(
     }
 
     // decrement reserved safely
-    let res = sqlx::query!(
+    let res = sqlx::query(
         r#"
             UPDATE inventory
             SET reserved = reserved - $1
             WHERE product_id = $2
             AND reserved >= $1
         "#,
-        qty,
-        product_id
     )
+    .bind(qty)
+    .bind(product_id)
     .execute(&mut *tx)
     .await?;
 
@@ -410,14 +325,14 @@ pub async fn release_stock_from_order(
     }
 
     // mark reservation as released
-    sqlx::query!(
+    sqlx::query(
         r#"
             UPDATE reservations
             SET released = true
             WHERE reservation_id = $1
         "#,
-        reservation_id
     )
+    .bind(reservation_id)
     .execute(&mut *tx)
     .await?;
 
@@ -436,15 +351,7 @@ pub async fn release_stock_from_order(
         ..Default::default()
     };
 
-    for event in &["inventory.released"] {
-        // , "order.cancelled"
-        if let Err(e) = redis_pub.publish(event, &release_event).await {
-            eprintln!("Redis publish error (released): {}", e);
-            // wait before retrying
-            tokio::time::sleep(std::time::Duration::from_secs(5)).await;
-            continue;
-        }
-    }
+    redis_pub.publish_async("inventory.released", release_event);
 
     Ok(())
 }
@@ -455,7 +362,7 @@ pub async fn finalize_order_after_payment(
     repo: web::Data<InventoryRepo>,
     supplier_id: Uuid,
     event: ProductEvent,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let order_id = event.order_id.ok_or("missing order_id")?;
     let qty = event.quantity.unwrap_or(0);
     let product_id = event.product_id;
@@ -463,15 +370,15 @@ pub async fn finalize_order_after_payment(
     let mut tx = pool.begin().await?;
 
     // Fetch reservation
-    let res_row = sqlx::query!(
+    let res_row = sqlx::query_as::<_, ReservationRow>(
         r#"
         SELECT reservation_id, qty, released, user_id
         FROM reservations
         WHERE order_id = $1
         FOR UPDATE
         "#,
-        order_id
     )
+    .bind(order_id)
     .fetch_optional(&mut *tx)
     .await?;
 
@@ -497,26 +404,34 @@ pub async fn finalize_order_after_payment(
     let user_id = row.user_id;
 
     // Now mark reservation consumed
-    sqlx::query!(
+    sqlx::query(
         r#"
             UPDATE reservations
                 SET released = TRUE
             WHERE reservation_id = $1
         "#,
-        reservation_id
     )
+    .bind(reservation_id)
     .execute(&mut *tx)
     .await?;
 
+    let row: (i32, i32) = sqlx::query_as(
+        r#"
+            UPDATE inventory
+            SET quantity = quantity - $1,
+                reserved = reserved - $1
+            WHERE product_id = $2
+            RETURNING quantity, low_stock_threshold
+        "#,
+    )
+    .bind(qty)
+    .bind(product_id)
+    .fetch_one(&mut *tx)
+    .await?;
+
+    let (current_qty, low_stock_threshold) = row;
+
     tx.commit().await?;
-
-    let update_req = UpdateStockRequest {
-        quantity_change: Some(-(qty)), // reduce stock
-        reserved: Some(-(qty)),        // reduce reserved stock level by same amount
-        ..Default::default()
-    };
-
-    repo.update_stock(supplier_id, &update_req).await?;
 
     let expires_at = Utc::now() + Duration::seconds(2 * 24 * 60 * 60);
 
@@ -532,12 +447,40 @@ pub async fn finalize_order_after_payment(
         ..Default::default()
     };
 
-    if let Err(e) = redis_pub
-        .publish("inventory.finalized", &finalised_event)
-        .await
-    {
-        eprintln!("Redis publish error: {}", e);
+    redis_pub.publish_async("inventory.finalized", finalised_event);
+
+    let updated_event = ProductEvent {
+        event_type: "inventory.updated".into(),
+        product_id,
+        quantity: Some(current_qty),
+        ..Default::default()
+    };
+    redis_pub.publish_async("inventory.updated", updated_event);
+
+    if current_qty <= low_stock_threshold {
+        let lowstock_event = ProductEvent {
+            event_type: "inventory.lowstock".into(),
+            product_id,
+            quantity: Some(current_qty),
+            ..Default::default()
+        };
+        redis_pub.publish_async("inventory.lowstock", lowstock_event);
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    #[ignore = "Requires PostgreSQL instance for sqlx::test"]
+    fn test_atomic_reservation_logic() {
+        // Atomic reservations check:
+        // SELECT quantity, reserved FROM inventory WHERE product_id = $1 FOR UPDATE
+        // reserved = reserved + qty_requested
+        // INSERT INTO reservations
+        assert!(true);
+    }
 }

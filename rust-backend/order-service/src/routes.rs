@@ -23,8 +23,8 @@ pub async fn create_order(
 
     let result = sqlx::query_as::<_, Order>(
         r#"
-            INSERT INTO orders (id, user_id, supplier_id, product_id, items, qty, status, expires_at, order_timestamp)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+            INSERT INTO orders (id, user_id, supplier_id, product_id, items, qty, status, expires_at, order_timestamp, version)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 1)
             RETURNING *
         "#
     )
@@ -127,8 +127,20 @@ pub async fn update_status(
                 status = COALESCE($1, status),
                 order_timestamp = COALESCE($2, order_timestamp),
                 expires_at = COALESCE($3, expires_at),
-                updated_at = NOW()
+                updated_at = NOW(),
+                version = version + 1
             WHERE id = $4 AND product_id = $5 AND user_id = $6
+            AND ($7 IS NULL OR version = $7)
+            AND (
+                ($1 = 'pending') OR
+                ($1 = 'confirmed' AND status = 'pending') OR
+                ($1 = 'failed' AND status = 'pending') OR
+                ($1 = 'cancelled' AND status != 'cancelled' AND status != 'delivered') OR
+                ($1 = 'shipped' AND (status = 'confirmed' OR status = 'processing')) OR
+                ($1 = 'delivered' AND status = 'shipped') OR
+                ($1 = 'refunded' AND status != 'refunded') OR
+                ($1 = 'processing' AND status = 'confirmed')
+            )
             RETURNING *
         "#,
     )
@@ -138,6 +150,7 @@ pub async fn update_status(
     .bind(order_id)
     .bind(product_id)
     .bind(user_id)
+    .bind(req.expected_version)
     .fetch_one(pool.get_ref())
     .await;
 
@@ -217,6 +230,40 @@ pub async fn update_status(
                     println!("Order {} set to Pending", order.id);
                 }
 
+                OrderStatus::Shipped => {
+                    let shipped_event = OrderEvent {
+                        event_type: "order.shipped".to_string(),
+                        product_id: order.product_id,
+                        supplier_id: order.supplier_id,
+                        order_id: Some(order.id),
+                        quantity: order.qty,
+                        user_id: Some(order.user_id),
+                        timestamp: order.order_timestamp,
+                        ..Default::default()
+                    };
+                    redis_pub.publish_async("order.shipped", shipped_event);
+                    println!("Order {} shipped", order.id);
+                }
+
+                OrderStatus::Refunded => {
+                    let refunded_event = OrderEvent {
+                        event_type: "order.refunded".to_string(),
+                        product_id: order.product_id,
+                        supplier_id: order.supplier_id,
+                        order_id: Some(order.id),
+                        quantity: order.qty,
+                        user_id: Some(order.user_id),
+                        timestamp: order.order_timestamp,
+                        ..Default::default()
+                    };
+                    redis_pub.publish_async("order.refunded", refunded_event);
+                    println!("Order {} refunded", order.id);
+                }
+
+                OrderStatus::Processing => {
+                    println!("Order {} is processing", order.id);
+                }
+
                 _ => {
                     // fallback for new statuses
                     println!("Order {} updated to {:?}", order.id, order.status);
@@ -267,3 +314,148 @@ pub async fn delete_order(
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use actix_web::{test, App};
+    use sqlx::PgPool;
+
+    #[sqlx::test]
+    async fn test_create_and_update_order_optimistic_concurrency(pool: PgPool) {
+        let redis_pub = web::Data::new(RedisPublisher::new_noop());
+        let pool_data = web::Data::new(pool);
+        
+        let mut app = test::init_service(
+            App::new()
+                .app_data(pool_data.clone())
+                .app_data(redis_pub.clone())
+                .service(create_order)
+                .service(update_status)
+        ).await;
+
+        let user_id = Uuid::new_v4();
+        let supplier_id = Uuid::new_v4();
+        let product_id = Uuid::new_v4();
+
+        // 1. Create order
+        let create_req = CreateOrderRequest {
+            user_id,
+            supplier_id,
+            product_id,
+            qty: 5,
+            status: Some(OrderStatus::Pending),
+            items: json!([{"name": "test item"}]),
+        };
+
+        let req = test::TestRequest::post()
+            .uri("/orders")
+            .set_json(&create_req)
+            .to_request();
+        let resp = test::call_service(&mut app, req).await;
+        assert_eq!(resp.status(), actix_web::http::StatusCode::CREATED);
+        
+        let body: serde_json::Value = test::read_body_json(resp).await;
+        let order_id = Uuid::parse_str(body["id"]["id"].as_str().unwrap()).unwrap();
+        let initial_version = body["id"]["version"].as_i64().unwrap() as i32;
+        assert_eq!(initial_version, 1);
+
+        // 2. Update order (matching version) - State transition Pending -> Confirmed
+        let update_req_success = UpdateOrderStatus {
+            id: order_id,
+            product_id: Some(product_id),
+            user_id: Some(user_id),
+            new_status: Some(OrderStatus::Confirmed),
+            expires_at: None,
+            order_timestamp: None,
+            expected_version: Some(initial_version),
+        };
+        
+        let req2 = test::TestRequest::put()
+            .uri(&format!("/orders/{}/status", order_id))
+            .set_json(&update_req_success)
+            .to_request();
+        let resp2 = test::call_service(&mut app, req2).await;
+        assert_eq!(resp2.status(), actix_web::http::StatusCode::OK);
+        
+        let body2: serde_json::Value = test::read_body_json(resp2).await;
+        let new_version = body2["status"]["version"].as_i64().unwrap() as i32;
+        assert_eq!(new_version, 2);
+        
+        // 3. Update order (mismatched version - Optimistic Concurrency Failure)
+        let update_req_fail = UpdateOrderStatus {
+            id: order_id,
+            product_id: Some(product_id),
+            user_id: Some(user_id),
+            new_status: Some(OrderStatus::Shipped),
+            expires_at: None,
+            order_timestamp: None,
+            expected_version: Some(1), // old version!
+        };
+        
+        let req3 = test::TestRequest::put()
+            .uri(&format!("/orders/{}/status", order_id))
+            .set_json(&update_req_fail)
+            .to_request();
+        let resp3 = test::call_service(&mut app, req3).await;
+        assert_eq!(resp3.status(), actix_web::http::StatusCode::NOT_FOUND); // Not found because of WHERE version = $7 mismatch
+    }
+
+    #[sqlx::test]
+    async fn test_invalid_state_transition(pool: PgPool) {
+        let redis_pub = web::Data::new(RedisPublisher::new_noop());
+        let pool_data = web::Data::new(pool);
+        
+        let mut app = test::init_service(
+            App::new()
+                .app_data(pool_data.clone())
+                .app_data(redis_pub.clone())
+                .service(create_order)
+                .service(update_status)
+        ).await;
+
+        let user_id = Uuid::new_v4();
+        let supplier_id = Uuid::new_v4();
+        let product_id = Uuid::new_v4();
+
+        // 1. Create order (Pending)
+        let create_req = CreateOrderRequest {
+            user_id,
+            supplier_id,
+            product_id,
+            qty: 1,
+            status: Some(OrderStatus::Pending),
+            items: json!([]),
+        };
+
+        let req = test::TestRequest::post()
+            .uri("/orders")
+            .set_json(&create_req)
+            .to_request();
+        let resp = test::call_service(&mut app, req).await;
+        let body: serde_json::Value = test::read_body_json(resp).await;
+        let order_id = Uuid::parse_str(body["id"]["id"].as_str().unwrap()).unwrap();
+
+        // 2. Try invalid transition (Pending -> Delivered)
+        let invalid_update = UpdateOrderStatus {
+            id: order_id,
+            product_id: Some(product_id),
+            user_id: Some(user_id),
+            new_status: Some(OrderStatus::Delivered),
+            expires_at: None,
+            order_timestamp: None,
+            expected_version: None, // Ignore version for this test
+        };
+        
+        let req2 = test::TestRequest::put()
+            .uri(&format!("/orders/{}/status", order_id))
+            .set_json(&invalid_update)
+            .to_request();
+        let resp2 = test::call_service(&mut app, req2).await;
+        
+        // Should return 404 because the state transition condition in the WHERE clause fails
+        assert_eq!(resp2.status(), actix_web::http::StatusCode::NOT_FOUND); 
+    }
+}
+
+

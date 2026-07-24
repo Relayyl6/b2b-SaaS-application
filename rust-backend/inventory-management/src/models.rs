@@ -83,3 +83,40 @@ pub struct ProductEvent {
     pub expires_at: Option<DateTime<Utc>>,
     pub user_id: Option<Uuid>, // pub status: OrderStatus,
 }
+
+#[derive(Debug, sqlx::FromRow)]
+pub struct ExpiredReservationRow {
+    pub reservation_id: Uuid,
+    pub order_id: Uuid,
+    pub product_id: Uuid,
+    pub qty: i32,
+    pub user_id: Uuid,
+}
+
+#[derive(Debug, sqlx::FromRow)]
+pub struct ReservationRow {
+    pub reservation_id: Uuid,
+    pub qty: i32,
+    pub released: bool,
+    pub user_id: Uuid,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_update_stock_request_default() {
+        let req = UpdateStockRequest::default();
+        assert_eq!(req.quantity, None);
+        assert_eq!(req.quantity_change, None);
+    }
+
+    #[test]
+    fn test_product_event_default() {
+        let event = ProductEvent::default();
+        assert_eq!(event.event_type, "");
+        assert_eq!(event.name, None);
+        assert_eq!(event.quantity_change, None);
+    }
+}

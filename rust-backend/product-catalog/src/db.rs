@@ -24,9 +24,9 @@ impl ProductRepo {
 
         sqlx::query_as::<_, Product>(
             r#"
-            INSERT INTO products (product_id, supplier_id, name, description, category, price, unit, quantity, available, low_stock_threshold)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-            RETURNING id, product_id, supplier_id, name, description, category, price, unit, quantity, available, low_stock_threshold, created_at, updated_at
+            INSERT INTO products (product_id, supplier_id, name, description, category, price, unit, quantity, available, low_stock_threshold, sku, variants)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+            RETURNING id, product_id, supplier_id, name, description, category, price, unit, quantity, available, low_stock_threshold, sku, variants, created_at, updated_at, deleted_at
             "#,
         )
         .bind(product_id)
@@ -39,6 +39,8 @@ impl ProductRepo {
         .bind(quantity)
         .bind(available)
         .bind(low_stock_threshold)
+        .bind(&req.sku)
+        .bind(&req.variants)
         .fetch_one(&self.pool)
         .await
     }
@@ -47,9 +49,9 @@ impl ProductRepo {
     pub async fn get_by_supplier(&self, supplier_id: Uuid) -> Result<Vec<Product>, sqlx::Error> {
         sqlx::query_as::<_, Product>(
             r#"
-                SELECT id, product_id, supplier_id, name, description, category, price, unit, quantity, available, low_stock_threshold, created_at, updated_at
+                SELECT id, product_id, supplier_id, name, description, category, price, unit, quantity, available, low_stock_threshold, sku, variants, created_at, updated_at, deleted_at
                 FROM products
-                WHERE supplier_id = $1
+                WHERE supplier_id = $1 AND deleted_at IS NULL
                 ORDER BY name
             "#,
         )
@@ -66,9 +68,9 @@ impl ProductRepo {
     ) -> Result<Product, sqlx::Error> {
         sqlx::query_as::<_, Product>(
             r#"
-            SELECT id, supplier_id, product_id, name, description, category, price, unit, quantity, available, low_stock_threshold, created_at, updated_at
+            SELECT id, supplier_id, product_id, name, description, category, price, unit, quantity, available, low_stock_threshold, sku, variants, created_at, updated_at, deleted_at
             FROM products
-            WHERE supplier_id = $1 AND product_id = $2
+            WHERE supplier_id = $1 AND product_id = $2 AND deleted_at IS NULL
             "#,
         )
         .bind(supplier_id)
@@ -102,9 +104,11 @@ impl ProductRepo {
               ),
               available = COALESCE($7, available),
               low_stock_threshold = COALESCE($9, low_stock_threshold),
+              sku = COALESCE($10, sku),
+              variants = COALESCE($11, variants),
               updated_at = NOW()
-            WHERE supplier_id = $10 AND product_id = $11
-            RETURNING id, product_id, supplier_id, name, description, category, price, unit, quantity, available, low_stock_threshold, created_at, updated_at
+            WHERE supplier_id = $12 AND product_id = $13 AND deleted_at IS NULL
+            RETURNING id, product_id, supplier_id, name, description, category, price, unit, quantity, available, low_stock_threshold, sku, variants, created_at, updated_at, deleted_at
             "#,
         )
         .bind(req.name.as_ref())
@@ -116,6 +120,8 @@ impl ProductRepo {
         .bind(req.available)
         .bind(req.quantity_change)
         .bind(req.low_stock_threshold)
+        .bind(req.sku.as_ref())
+        .bind(req.variants.as_ref())
         .bind(supplier_id)
         .bind(product_id)
         .fetch_one(&self.pool)
@@ -129,7 +135,7 @@ impl ProductRepo {
         product_id: Uuid,
     ) -> Result<u64, sqlx::Error> {
         let result =
-            sqlx::query(r#"DELETE FROM products WHERE supplier_id = $1 AND product_id = $2"#)
+            sqlx::query(r#"UPDATE products SET deleted_at = NOW() WHERE supplier_id = $1 AND product_id = $2 AND deleted_at IS NULL"#)
                 .bind(supplier_id)
                 .bind(product_id)
                 .execute(&self.pool)
@@ -151,9 +157,10 @@ impl ProductRepo {
     ) -> Result<Vec<Product>, sqlx::Error> {
         let rows = sqlx::query_as::<_, Product>(
             r#"
-            SELECT id, product_id, supplier_id, name, description, category, price, unit, quantity, available, low_stock_threshold, created_at, updated_at
+            SELECT id, product_id, supplier_id, name, description, category, price, unit, quantity, available, low_stock_threshold, sku, variants, created_at, updated_at, deleted_at
             FROM products
-            WHERE ($1::text IS NULL OR category = $1)
+            WHERE deleted_at IS NULL
+              AND ($1::text IS NULL OR category = $1)
               AND ($2::double precision IS NULL OR price >= $2)
               AND ($3::double precision IS NULL OR price <= $3)
               AND ($4::uuid IS NULL OR supplier_id = $4)
@@ -186,9 +193,9 @@ impl ProductRepo {
         for it in items {
             let p = sqlx::query_as::<_, Product>(
                 r#"
-                INSERT INTO products (product_id, supplier_id, name, description, category, price, unit, quantity, available, low_stock_threshold)
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-                RETURNING id, product_id, supplier_id, name, description, category, price, unit, quantity, available, low_stock_threshold, created_at, updated_at
+                INSERT INTO products (product_id, supplier_id, name, description, category, price, unit, quantity, available, low_stock_threshold, sku, variants)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+                RETURNING id, product_id, supplier_id, name, description, category, price, unit, quantity, available, low_stock_threshold, sku, variants, created_at, updated_at, deleted_at
                 "#,
             )
             .bind(it.product_id.unwrap_or_else(Uuid::new_v4))
@@ -201,6 +208,8 @@ impl ProductRepo {
             .bind(it.quantity.unwrap_or(0))
             .bind(it.available.unwrap_or(true))
             .bind(it.low_stock_threshold.unwrap_or(10))
+            .bind(&it.sku)
+            .bind(&it.variants)
             .fetch_one(&mut *tx)
             .await?;
 

@@ -94,17 +94,6 @@ impl LogisticsRepo {
         shipment_id: Uuid,
         req: &UpdateShipmentStatusRequest,
     ) -> Result<Shipment, sqlx::Error> {
-        let current = self.get_shipment(shipment_id).await?;
-        if !current.status.can_transition_to(&req.status) {
-            return Err(sqlx::Error::Protocol(
-                format!(
-                    "invalid status transition: {:?} -> {:?}",
-                    current.status, req.status
-                )
-                .into(),
-            ));
-        }
-
         let dispatched_at = if req.status == ShipmentStatus::Intransit {
             Some(Utc::now())
         } else {
@@ -117,7 +106,7 @@ impl LogisticsRepo {
             None
         };
 
-        sqlx::query_as::<_, Shipment>(
+        let res = sqlx::query_as::<_, Shipment>(
             r#"
             UPDATE shipments
             SET
@@ -126,7 +115,12 @@ impl LogisticsRepo {
                 dispatched_at = COALESCE($3, dispatched_at),
                 delivered_at = COALESCE($4, delivered_at),
                 updated_at = NOW()
-            WHERE id = $5
+            WHERE id = $5 AND (
+                ($1 = 'intransit' AND status = 'pending') OR
+                ($1 = 'delivered' AND status = 'intransit') OR
+                ($1 = 'cancelled' AND status IN ('pending', 'intransit')) OR
+                ($1 = status)
+            )
             RETURNING *
             "#,
         )
@@ -135,8 +129,13 @@ impl LogisticsRepo {
         .bind(dispatched_at)
         .bind(delivered_at)
         .bind(shipment_id)
-        .fetch_one(&self.pool)
-        .await
+        .fetch_optional(&self.pool)
+        .await?;
+
+        match res {
+            Some(shipment) => Ok(shipment),
+            None => Err(sqlx::Error::RowNotFound),
+        }
     }
 
     /// Cancels the shipment for an order when cancellation is allowed.
@@ -154,5 +153,48 @@ impl LogisticsRepo {
         .bind(order_id)
         .fetch_one(&self.pool)
         .await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::models::{CreateShipmentRequest, ShipmentStatus, UpdateShipmentStatusRequest};
+    use uuid::Uuid;
+
+    #[sqlx::test]
+    async fn test_state_transitions_in_db(pool: sqlx::PgPool) {
+        let repo = LogisticsRepo::new(&pool);
+        let order_id = Uuid::new_v4();
+        
+        let req = CreateShipmentRequest {
+            order_id,
+            user_id: Uuid::new_v4(),
+            supplier_id: Uuid::new_v4(),
+            product_id: Uuid::new_v4(),
+            notes: None,
+        };
+
+        // 1. Create a shipment
+        let shipment = repo.create_shipment(&req).await.unwrap();
+        assert_eq!(shipment.status, ShipmentStatus::Pending);
+
+        // 2. Invalid transition (Pending -> Delivered)
+        let invalid_update = UpdateShipmentStatusRequest {
+            status: ShipmentStatus::Delivered,
+            notes: None,
+        };
+        let result = repo.update_status(shipment.id, &invalid_update).await;
+        
+        // Because of the WHERE clause in update_status, 0 rows are updated, returning RowNotFound.
+        assert!(matches!(result, Err(sqlx::Error::RowNotFound)));
+
+        // 3. Valid transition (Pending -> Intransit)
+        let valid_update = UpdateShipmentStatusRequest {
+            status: ShipmentStatus::Intransit,
+            notes: None,
+        };
+        let updated = repo.update_status(shipment.id, &valid_update).await.unwrap();
+        assert_eq!(updated.status, ShipmentStatus::Intransit);
     }
 }

@@ -4,9 +4,9 @@ services:
   postgres:
     image: postgres:17
     environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: pussyli$%ager
-      POSTGRES_DB: b2b
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
     ports:
       - "5432:5432"
     volumes:
@@ -28,10 +28,10 @@ services:
       context: .
       dockerfile: rust-backend/inventory-management/Dockerfile
     environment:
-      DATABASE_URL: postgres://postgres:pussyli%24%25ager@db:5432/b2b
+      DATABASE_URL: ${DATABASE_URL}
       REDIS_URL: redis://127.0.0.1:6379
       SERVICE_PORT: 3005
-      AMQP_ADDR: amqp://guest:guest@rabbitmq:5672/%2f
+      AMQP_ADDR: ${AMQP_ADDR}
     depends_on:
       - postgres
       - redis
@@ -44,10 +44,10 @@ services:
       context: .
       dockerfile: rust-backend/notifications/Dockerfile
     environment:
-      DATABASE_URL: postgres://postgres:pussyli%24%25ager@db:5432/b2b
+      DATABASE_URL: ${DATABASE_URL}
       REDIS_URL: redis://127.0.0.1:6379
       SERVICE_PORT: 3009
-      AMQP_ADDR: amqp://guest:guest@rabbitmq:5672/%2f
+      AMQP_ADDR: ${AMQP_ADDR}
     depends_on:
       - postgres
       - redis
@@ -60,10 +60,10 @@ services:
       context: .
       dockerfile: rust-backend/user-management/Dockerfile
     environment:
-      DATABASE_URL: postgres://postgres:pussyli%24%25ager@db:5432/b2b
+      DATABASE_URL: ${DATABASE_URL}
       REDIS_URL: redis://127.0.0.1:6379
       SERVICE_PORT: 3005
-      AMQP_ADDR: amqp://guest:guest@rabbitmq:5672/%2f
+      AMQP_ADDR: ${AMQP_ADDR}
     depends_on:
       - postgres
       - redis
@@ -76,10 +76,10 @@ services:
       context: .
       dockerfile: rust-backend/product-catalog/Dockerfile
     environment:
-      DATABASE_URL: postgres://postgres:pussyli%24%25ager@db:5432/b2b
+      DATABASE_URL: ${DATABASE_URL}
       REDIS_URL: redis://127.0.0.1:6379
       SERVICE_PORT: 3003
-      AMQP_ADDR: amqp://guest:guest@rabbitmq:5672/%2f
+      AMQP_ADDR: ${AMQP_ADDR}
     depends_on:
       - postgres
       - redis
@@ -92,7 +92,7 @@ services:
       context: .
       dockerfile: rust-backend/order-service/Dockerfile
     environment:
-      DATABASE_URL: postgres://postgres:pussyli%24%25ager@db:5432/b2b
+      DATABASE_URL: ${DATABASE_URL}
       REDIS_URL: redis://127.0.0.1:6379
       PORT: 3005
       HOST: 0.0.0.0
@@ -107,10 +107,10 @@ services:
       context: .
       dockerfile: rust-backend/logistics/Dockerfile
     environment:
-      DATABASE_URL: postgres://postgres:pussyli%24%25ager@db:5432/b2b
+      DATABASE_URL: ${DATABASE_URL}
       REDIS_URL: redis://127.0.0.1:6379
       SERVICE_PORT: 3008
-      AMQP_ADDR: amqp://guest:guest@rabbitmq:5672/%2f
+      AMQP_ADDR: ${AMQP_ADDR}
     depends_on:
       - postgres
       - redis
@@ -123,10 +123,10 @@ services:
       context: .
       dockerfile: rust-backend/analytics/Dockerfile
     environment:
-      DATABASE_URL: postgres://postgres:pussyli%24%25ager@db:5432/b2b
+      DATABASE_URL: ${DATABASE_URL}
       REDIS_URL: redis://127.0.0.1:6379
       SERVICE_PORT: 3007
-      AMQP_ADDR: amqp://guest:guest@rabbitmq:5672/%2f
+      AMQP_ADDR: ${AMQP_ADDR}
     depends_on:
       - postgres
       - redis

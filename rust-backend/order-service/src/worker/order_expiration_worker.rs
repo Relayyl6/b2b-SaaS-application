@@ -48,3 +48,4 @@ async fn fail_expired_orders(pool: &PgPool, redis_pub: &RedisPublisher) -> Resul
 
     Ok(())
 }
+

@@ -48,7 +48,15 @@ async fn main() -> std::io::Result<()> {
             .expect("redis client"),
     );
 
-    let rabbit_pub = web::Data::new(RabbitPublisher);
+    let amqp_addr = env::var("AMQP_ADDR")
+        .unwrap_or_else(|_| "amqp://guest:guest@127.0.0.1:5672/%2f".into());
+    let rabbit_pub = match RabbitPublisher::new(&amqp_addr).await {
+        Ok(p) => web::Data::new(p),
+        Err(e) => {
+            eprintln!("Failed to connect RabbitMQ: {e:?}");
+            std::process::exit(1);
+        }
+    };
 
     let redis_pub = match redis_url.clone() {
         Ok(url) => {

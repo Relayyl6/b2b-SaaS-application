@@ -6,6 +6,7 @@ license.workspace = true
 
 [dependencies]
 actix-web.workspace = true
+deadpool-redis = "0.15"
 futures-util.workspace = true
 opentelemetry.workspace = true
 opentelemetry-otlp.workspace = true

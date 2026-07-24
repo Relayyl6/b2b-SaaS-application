@@ -3,9 +3,11 @@ mod handlers;
 mod models;
 mod rabbit_pub;
 mod redis_pub;
+mod storage;
 
 use crate::db::ProductRepo;
 use crate::redis_pub::RedisPublisher;
+use crate::storage::{CloudinaryStorage, StorageProvider};
 use actix_web::{App, HttpServer, web};
 use dotenvy::dotenv;
 use platform::{metrics, observability};
@@ -56,6 +58,12 @@ async fn main() -> std::io::Result<()> {
         .expect("redis client"),
     );
 
+    let storage: std::sync::Arc<dyn StorageProvider> = std::sync::Arc::new(CloudinaryStorage::new(
+        env::var("CLOUDINARY_CLOUD_NAME").unwrap_or_default(),
+        env::var("CLOUDINARY_API_KEY").unwrap_or_default(),
+        env::var("CLOUDINARY_API_SECRET").unwrap_or_default(),
+    ));
+
     tracing::info!("Product Catalog Service listening on 0.0.0.0:{}", port);
 
     HttpServer::new(move || {
@@ -63,6 +71,7 @@ async fn main() -> std::io::Result<()> {
             .app_data(repo.clone())
             .app_data(redis_pub.clone())
             .app_data(redis_client.clone())
+            .app_data(web::Data::new(storage.clone()))
             .route("/metrics", web::get().to(metrics::metrics_handler))
             .route("/products", web::post().to(handlers::create_product))
             .route("/products/bulk", web::post().to(handlers::bulk_create))

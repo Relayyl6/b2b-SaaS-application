@@ -25,7 +25,7 @@ const EVENTS: &[&str] = &[
 
 pub async fn listen_to_redis_events(
     repo: web::Data<NotificationRepo>,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let redis_url = env::var("REDIS_URL")?;
     let consumer = env::var("CONSUMER_NAME").unwrap_or_else(|_| "notifications-1".to_string());
 
@@ -40,10 +40,11 @@ pub async fn listen_to_redis_events(
                 let Some(mut notification) =
                     notification_from_event(&envelope.event_type, envelope.payload)
                 else {
-                    return;
+                    return Ok(());
                 };
                 notification.event_type = Some(envelope.event_type.clone());
-                let outcome = if repo.create(&notification).await.is_ok() {
+                let res: Result<_, sqlx::Error> = repo.create(&notification).await;
+                let outcome = if res.is_ok() {
                     "ok"
                 } else {
                     "error"
@@ -54,6 +55,11 @@ pub async fn listen_to_redis_events(
                     &envelope.event_type,
                     outcome,
                 );
+
+                if outcome == "error" {
+                    return Err("Failed to create notification".into());
+                }
+                Ok(())
             }
         },
     )

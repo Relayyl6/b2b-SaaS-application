@@ -51,6 +51,10 @@ async fn main() -> std::io::Result<()> {
                 web::get().to(handlers::list_owner_suppliers),
             )
             .route(
+                "/suppliers/{id}",
+                web::put().to(handlers::update_supplier),
+            )
+            .route(
                 "/suppliers/{id}/status",
                 web::put().to(handlers::update_supplier_status),
             )

@@ -1,4 +1,4 @@
-use crate::models::{CreateSupplierRequest, Supplier, SupplierStatus};
+use crate::models::{CreateSupplierRequest, Supplier, SupplierStatus, UpdateSupplierRequest};
 use sqlx::PgPool;
 use uuid::Uuid;
 
@@ -15,8 +15,8 @@ impl SupplierRepo {
     pub async fn create(&self, req: &CreateSupplierRequest) -> Result<Supplier, sqlx::Error> {
         sqlx::query_as::<_, Supplier>(
             r#"
-            INSERT INTO suppliers (owner_user_id, legal_name, display_name, tax_id, country, metadata)
-            VALUES ($1, $2, $3, $4, COALESCE($5, 'NG'), COALESCE($6, '{}'::jsonb))
+            INSERT INTO suppliers (owner_user_id, legal_name, display_name, tax_id, country, metadata, platform_fee_percent)
+            VALUES ($1, $2, $3, $4, COALESCE($5, 'NG'), COALESCE($6, '{}'::jsonb), $7)
             RETURNING *
             "#,
         )
@@ -26,6 +26,7 @@ impl SupplierRepo {
         .bind(&req.tax_id)
         .bind(&req.country)
         .bind(req.metadata.as_ref())
+        .bind(req.platform_fee_percent.unwrap_or(5.0))
         .fetch_one(&self.pool)
         .await
     }
@@ -49,13 +50,48 @@ impl SupplierRepo {
     pub async fn update_status(
         &self,
         id: Uuid,
+        owner_user_id: Uuid,
         status: SupplierStatus,
     ) -> Result<Supplier, sqlx::Error> {
         sqlx::query_as::<_, Supplier>(
-            "UPDATE suppliers SET status = $1, updated_at = NOW() WHERE id = $2 RETURNING *",
+            "UPDATE suppliers SET status = $1, updated_at = NOW() WHERE id = $2 AND owner_user_id = $3 RETURNING *",
         )
         .bind(status)
         .bind(id)
+        .bind(owner_user_id)
+        .fetch_one(&self.pool)
+        .await
+    }
+
+    pub async fn update_supplier(
+        &self,
+        id: Uuid,
+        owner_user_id: Uuid,
+        req: &UpdateSupplierRequest,
+    ) -> Result<Supplier, sqlx::Error> {
+        sqlx::query_as::<_, Supplier>(
+            r#"
+            UPDATE suppliers 
+            SET 
+                legal_name = COALESCE($1, legal_name),
+                display_name = COALESCE($2, display_name),
+                tax_id = COALESCE($3, tax_id),
+                country = COALESCE($4, country),
+                platform_fee_percent = COALESCE($5, platform_fee_percent),
+                metadata = COALESCE($6, metadata),
+                updated_at = NOW()
+            WHERE id = $7 AND owner_user_id = $8
+            RETURNING *
+            "#,
+        )
+        .bind(req.legal_name.as_ref())
+        .bind(req.display_name.as_ref())
+        .bind(req.tax_id.as_ref())
+        .bind(req.country.as_ref())
+        .bind(req.platform_fee_percent)
+        .bind(req.metadata.as_ref())
+        .bind(id)
+        .bind(owner_user_id)
         .fetch_one(&self.pool)
         .await
     }

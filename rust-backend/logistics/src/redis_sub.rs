@@ -15,7 +15,7 @@ pub async fn listen_to_redis_events(
     repo: Data<LogisticsRepo>,
     redis_pub: Data<RedisPublisher>,
     rabbit_pub: Data<RabbitPublisher>,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let redis_url = env::var("REDIS_URL").map_err(|_| "REDIS_URL must be set in environment")?;
     let consumer = env::var("CONSUMER_NAME").unwrap_or_else(|_| "logistics-1".to_string());
 
@@ -46,7 +46,9 @@ pub async fn listen_to_redis_events(
                 );
                 if let Err(e) = result {
                     eprintln!("logistics stream handler failed for {event_type}: {e}");
+                    return Err(e);
                 }
+                Ok(())
             }
         },
     )
@@ -59,7 +61,7 @@ async fn handle_event(
     rabbit_pub: &Data<RabbitPublisher>,
     event_type: &str,
     event: IncomingOrderEvent,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     match event_type {
         "inventory.finalized" => {
             let Some(order_id) = event.order_id else {

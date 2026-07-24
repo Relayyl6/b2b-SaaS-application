@@ -32,3 +32,18 @@ pub fn init_observability(service_name: &'static str) {
         .with(tracing_subscriber::fmt::layer())
         .try_init();
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_init_observability() {
+        // We can only test that it doesn't panic on multiple initializations
+        // due to tracing_subscriber global nature.
+        init_observability("test_service");
+        
+        // Calling it again should not panic (because try_init is used)
+        init_observability("test_service");
+    }
+}

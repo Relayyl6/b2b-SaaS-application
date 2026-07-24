@@ -1,3 +1,4 @@
+use deadpool_redis::{Config, Pool, Runtime};
 use redis::{aio::MultiplexedConnection, Client, RedisError};
 use serde::de::DeserializeOwned;
 use serde::Serialize;
@@ -6,7 +7,7 @@ use std::time::Duration;
 
 #[derive(Clone)]
 pub struct StreamPublisher {
-    client: Option<Client>,
+    pool: Option<Pool>,
     enabled: bool,
 }
 
@@ -19,16 +20,18 @@ pub struct StreamEnvelope<T> {
 }
 
 impl StreamPublisher {
-    pub fn new(redis_url: &str) -> Result<Self, RedisError> {
+    pub fn new(redis_url: &str) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
+        let cfg = Config::from_url(redis_url);
+        let pool = cfg.create_pool(Some(Runtime::Tokio1))?;
         Ok(Self {
-            client: Some(Client::open(redis_url)?),
+            pool: Some(pool),
             enabled: true,
         })
     }
 
     pub fn noop() -> Self {
         Self {
-            client: None,
+            pool: None,
             enabled: false,
         }
     }
@@ -37,34 +40,29 @@ impl StreamPublisher {
         &self,
         event_type: &str,
         message: &T,
-    ) -> Result<String, RedisError> {
+    ) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
         if !self.enabled {
             return Ok("noop".to_string());
         }
 
         let stream = stream_for_event(event_type);
-        let payload = serde_json::to_string(message).map_err(|e| {
-            redis::RedisError::from((
-                redis::ErrorKind::TypeError,
-                "event serialization failed",
-                e.to_string(),
-            ))
-        })?;
+        let payload = serde_json::to_string(message)?;
 
-        let Some(client) = &self.client else {
+        let Some(pool) = &self.pool else {
             return Ok("noop".to_string());
         };
 
-        let mut conn = client.get_multiplexed_async_connection().await?;
-        redis::cmd("XADD")
+        let mut conn = pool.get().await?;
+        let res: String = redis::cmd("XADD")
             .arg(stream)
             .arg("*")
             .arg("event_type")
             .arg(event_type)
             .arg("payload")
             .arg(payload)
-            .query_async(&mut conn)
-            .await
+            .query_async(&mut *conn)
+            .await?;
+        Ok(res)
     }
 
     pub fn publish_async<T>(&self, event_type: &str, message: T)
@@ -74,8 +72,27 @@ impl StreamPublisher {
         let this = self.clone();
         let event_type = event_type.to_string();
         tokio::spawn(async move {
-            if let Err(e) = this.publish(&event_type, &message).await {
-                tracing::warn!(%event_type, error = ?e, "redis stream publish failed");
+            let error_str = match this.publish(&event_type, &message).await {
+                Ok(_) => return,
+                Err(e) => e.to_string(),
+            };
+            
+            tracing::warn!(%event_type, error = %error_str, "redis stream publish failed, routing to DLQ");
+            if let Some(pool) = &this.pool {
+                if let Ok(mut conn) = pool.get().await {
+                    let payload = serde_json::to_string(&message).unwrap_or_default();
+                    let _: Result<(), _> = redis::cmd("XADD")
+                        .arg("stream:dlq")
+                        .arg("*")
+                        .arg("event_type")
+                        .arg(&event_type)
+                        .arg("payload")
+                        .arg(payload)
+                        .arg("error")
+                        .arg(&error_str)
+                        .query_async(&mut *conn)
+                        .await;
+                }
             }
         });
     }
@@ -123,11 +140,11 @@ pub async fn consume_json<T, F, Fut>(
     consumer: &str,
     event_types: &[&str],
     mut handler: F,
-) -> Result<(), Box<dyn std::error::Error>>
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>>
 where
     T: DeserializeOwned + Send + 'static,
     F: FnMut(StreamEnvelope<T>) -> Fut,
-    Fut: std::future::Future<Output = ()>,
+    Fut: std::future::Future<Output = Result<(), Box<dyn std::error::Error + Send + Sync>>>,
 {
     let streams = streams_for_events(event_types);
     let client = Client::open(redis_url)?;
@@ -160,13 +177,14 @@ where
         for event in events {
             let stream = event.stream.clone();
             let id = event.id.clone();
-            handler(event).await;
-            let _: Result<(), RedisError> = redis::cmd("XACK")
-                .arg(stream)
-                .arg(group)
-                .arg(id)
-                .query_async(&mut conn)
-                .await;
+            if let Ok(()) = handler(event).await {
+                let _: Result<(), RedisError> = redis::cmd("XACK")
+                    .arg(stream)
+                    .arg(group)
+                    .arg(id)
+                    .query_async(&mut conn)
+                    .await;
+            }
         }
 
         tokio::time::sleep(Duration::from_millis(100)).await;
@@ -244,5 +262,106 @@ fn value_to_string(value: &redis::Value) -> String {
         redis::Value::Okay => "OK".to_string(),
         redis::Value::Int(value) => value.to_string(),
         _ => String::new(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde::Deserialize;
+
+    #[derive(Serialize, Deserialize, Debug, PartialEq)]
+    struct DummyEvent {
+        value: i32,
+    }
+
+    #[test]
+    fn test_stream_for_event() {
+        assert_eq!(stream_for_event("product.created"), "stream:products");
+        assert_eq!(stream_for_event("order.updated"), "stream:orders");
+        assert_eq!(stream_for_event("inventory.reserved"), "stream:inventory");
+        assert_eq!(stream_for_event("logistics.shipped"), "stream:logistics");
+        assert_eq!(stream_for_event("payment.processed"), "stream:payments");
+        assert_eq!(stream_for_event("user.registered"), "stream:users");
+        assert_eq!(stream_for_event("supplier.created"), "stream:suppliers");
+        assert_eq!(stream_for_event("tenant.updated"), "stream:suppliers");
+        assert_eq!(stream_for_event("notification.sent"), "stream:notifications");
+        assert_eq!(stream_for_event("unknown.event"), "stream:platform");
+    }
+
+    #[test]
+    fn test_streams_for_events() {
+        let events = vec!["product.created", "order.created", "product.updated"];
+        let streams = streams_for_events(&events);
+        assert_eq!(streams.len(), 2);
+        assert!(streams.contains(&"stream:products"));
+        assert!(streams.contains(&"stream:orders"));
+    }
+
+    #[test]
+    fn test_stream_publisher_noop() {
+        let publisher = StreamPublisher::noop();
+        assert!(!publisher.enabled);
+        assert!(publisher.pool.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_publish_noop() {
+        let publisher = StreamPublisher::noop();
+        let res = publisher.publish("order.created", &DummyEvent { value: 1 }).await.unwrap();
+        assert_eq!(res, "noop");
+    }
+
+    #[test]
+    fn test_value_to_string() {
+        let b = b"hello";
+        let data = redis::Value::Data(b.to_vec());
+        assert_eq!(value_to_string(&data), "hello");
+
+        let status = redis::Value::Status("good".to_string());
+        assert_eq!(value_to_string(&status), "good");
+
+        let ok = redis::Value::Okay;
+        assert_eq!(value_to_string(&ok), "OK");
+
+        let i = redis::Value::Int(42);
+        assert_eq!(value_to_string(&i), "42");
+    }
+
+    #[test]
+    fn test_parse_stream_reply() {
+        // Construct a mock redis value for stream reply
+        // [
+        //   [ "stream:orders", [
+        //       [ "123-0", ["event_type", "order.created", "payload", "{\"value\":42}"] ]
+        //     ]
+        //   ]
+        // ]
+        let message_fields = redis::Value::Bulk(vec![
+            redis::Value::Data(b"event_type".to_vec()),
+            redis::Value::Data(b"order.created".to_vec()),
+            redis::Value::Data(b"payload".to_vec()),
+            redis::Value::Data(b"{\"value\":42}".to_vec()),
+        ]);
+
+        let message = redis::Value::Bulk(vec![
+            redis::Value::Data(b"123-0".to_vec()),
+            message_fields,
+        ]);
+
+        let stream = redis::Value::Bulk(vec![
+            redis::Value::Data(b"stream:orders".to_vec()),
+            redis::Value::Bulk(vec![message]),
+        ]);
+
+        let reply = redis::Value::Bulk(vec![stream]);
+
+        let events: Vec<StreamEnvelope<DummyEvent>> = parse_stream_reply(reply, &["order.created"]);
+        
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].stream, "stream:orders");
+        assert_eq!(events[0].id, "123-0");
+        assert_eq!(events[0].event_type, "order.created");
+        assert_eq!(events[0].payload.value, 42);
     }
 }

@@ -1,10 +1,17 @@
 services:
   api-gateway:
     image: nginx:1.27-alpine
+    restart: unless-stopped
     ports:
       - "8080:80"
+      - "8443:443"
     volumes:
       - ./infra/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
     depends_on:
       - user-management
       - product-catalog
@@ -17,9 +24,10 @@ services:
 
   postgres:
     image: postgres:16-alpine
+    restart: unless-stopped
     environment:
-      POSTGRES_USER: ${POSTGRES_USER:-postgres}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       POSTGRES_MULTIPLE_DATABASES: ${POSTGRES_MULTIPLE_DATABASES:-users,products,orders,inventory,logistics,notifications,payments,suppliers}
     ports:
       - "5432:5432"
@@ -27,32 +35,77 @@ services:
       - postgres-data:/var/lib/postgresql/data
       - ./infra/postgres/init-multiple-databases.sh:/docker-entrypoint-initdb.d/init-multiple-databases.sh:ro
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres}"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER}"]
       interval: 10s
       timeout: 5s
       retries: 5
 
   timescaledb:
     image: timescale/timescaledb:latest-pg15
+    restart: unless-stopped
     environment:
-      POSTGRES_USER: ${POSTGRES_USER:-postgres}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       POSTGRES_DB: analytics_service
     ports:
       - "5433:5432"
     volumes:
       - timescale-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
   redis:
     image: redis:7-alpine
+    restart: unless-stopped
     ports:
       - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
   rabbitmq:
     image: rabbitmq:3-management-alpine
+    restart: unless-stopped
     ports:
       - "5672:5672"
       - "15672:15672"
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  otel-collector:
+    image: otel/opentelemetry-collector:0.104.0
+    restart: unless-stopped
+    command: ["--config=/etc/otel-collector-config.yaml"]
+    volumes:
+      - ./infra/observability/otel-collector-config.yaml:/etc/otel-collector-config.yaml:ro
+    ports:
+      - "4317:4317"
+      - "4318:4318"
+
+  prometheus:
+    image: prom/prometheus:v2.53.0
+    restart: unless-stopped
+    volumes:
+      - ./infra/observability/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    ports:
+      - "9090:9090"
+
+  grafana:
+    image: grafana/grafana:11.1.0
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    volumes:
+      - grafana-data:/var/lib/grafana
 
   user-management:
     build:
@@ -61,17 +114,23 @@ services:
       args:
         PACKAGE: user-management
         BINARY: user-management
+    restart: unless-stopped
     environment:
-      DATABASE_URL: ${USER_DATABASE_URL:-postgres://postgres:postgres@postgres:5432/users}
+      DATABASE_URL: ${USER_DATABASE_URL}
       REDIS_URL: ${REDIS_URL:-redis://redis:6379}
-      SECRET: ${SECRET:-change-me}
-      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
+      SECRET: ${SECRET}
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://otel-collector:4317}
       PORT: 3004
     depends_on:
       postgres:
         condition: service_healthy
       redis:
-        condition: service_started
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3004/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
 
   product-catalog:
     build:
@@ -80,19 +139,25 @@ services:
       args:
         PACKAGE: product-catalog
         BINARY: product-catalog
+    restart: unless-stopped
     environment:
-      DATABASE_URL: ${PRODUCT_DATABASE_URL:-postgres://postgres:postgres@postgres:5432/products}
+      DATABASE_URL: ${PRODUCT_DATABASE_URL}
       REDIS_URL: ${REDIS_URL:-redis://redis:6379}
-      RABBITMQ_URL: ${RABBITMQ_URL:-amqp://guest:guest@rabbitmq:5672/%2f}
+      RABBITMQ_URL: ${RABBITMQ_URL}
       SERVICE_PORT: 3003
-      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://otel-collector:4317}
     depends_on:
       postgres:
         condition: service_healthy
       redis:
-        condition: service_started
+        condition: service_healthy
       rabbitmq:
-        condition: service_started
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3003/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
 
   order-service:
     build:
@@ -101,16 +166,22 @@ services:
       args:
         PACKAGE: order-service
         BINARY: order-service
+    restart: unless-stopped
     environment:
-      DATABASE_URL: ${ORDER_DATABASE_URL:-postgres://postgres:postgres@postgres:5432/orders}
+      DATABASE_URL: ${ORDER_DATABASE_URL}
       REDIS_URL: ${REDIS_URL:-redis://redis:6379}
       PORT: 3005
-      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://otel-collector:4317}
     depends_on:
       postgres:
         condition: service_healthy
       redis:
-        condition: service_started
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3005/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
 
   inventory-management:
     build:
@@ -119,16 +190,22 @@ services:
       args:
         PACKAGE: inventory-service
         BINARY: inventory-service
+    restart: unless-stopped
     environment:
-      DATABASE_URL: ${INVENTORY_DATABASE_URL:-postgres://postgres:postgres@postgres:5432/inventory}
+      DATABASE_URL: ${INVENTORY_DATABASE_URL}
       REDIS_URL: ${REDIS_URL:-redis://redis:6379}
       SERVICE_PORT: 3006
-      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://otel-collector:4317}
     depends_on:
       postgres:
         condition: service_healthy
       redis:
-        condition: service_started
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3006/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
 
   logistics:
     build:
@@ -137,19 +214,25 @@ services:
       args:
         PACKAGE: logistics
         BINARY: logistics
+    restart: unless-stopped
     environment:
-      DATABASE_URL: ${LOGISTICS_DATABASE_URL:-postgres://postgres:postgres@postgres:5432/logistics}
+      DATABASE_URL: ${LOGISTICS_DATABASE_URL}
       REDIS_URL: ${REDIS_URL:-redis://redis:6379}
-      RABBITMQ_URL: ${RABBITMQ_URL:-amqp://guest:guest@rabbitmq:5672/%2f}
+      RABBITMQ_URL: ${RABBITMQ_URL}
       SERVICE_PORT: 3008
-      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://otel-collector:4317}
     depends_on:
       postgres:
         condition: service_healthy
       redis:
-        condition: service_started
+        condition: service_healthy
       rabbitmq:
-        condition: service_started
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3008/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
 
   notifications:
     build:
@@ -158,21 +241,23 @@ services:
       args:
         PACKAGE: notifications
         BINARY: notifications
+    restart: unless-stopped
     environment:
-      DATABASE_URL: ${NOTIFICATIONS_DATABASE_URL:-postgres://postgres:postgres@postgres:5432/notifications}
+      DATABASE_URL: ${NOTIFICATIONS_DATABASE_URL}
       REDIS_URL: ${REDIS_URL:-redis://redis:6379}
       SERVICE_PORT: 3009
       NOTIFICATION_DRY_RUN: ${NOTIFICATION_DRY_RUN:-true}
-      EMAIL_WEBHOOK_URL: ${EMAIL_WEBHOOK_URL:-}
-      SMS_WEBHOOK_URL: ${SMS_WEBHOOK_URL:-}
-      EXPO_PUSH_URL: ${EXPO_PUSH_URL:-https://exp.host/--/api/v2/push/send}
-      EXPO_ACCESS_TOKEN: ${EXPO_ACCESS_TOKEN:-}
-      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://otel-collector:4317}
     depends_on:
       postgres:
         condition: service_healthy
       redis:
-        condition: service_started
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3009/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
 
   payments:
     build:
@@ -181,16 +266,24 @@ services:
       args:
         PACKAGE: payments
         BINARY: payments
+    restart: unless-stopped
     environment:
-      DATABASE_URL: ${PAYMENTS_DATABASE_URL:-postgres://postgres:postgres@postgres:5432/payments}
+      DATABASE_URL: ${PAYMENTS_DATABASE_URL}
       REDIS_URL: ${REDIS_URL:-redis://redis:6379}
       SERVICE_PORT: 3010
-      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
+      STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY}
+      STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET}
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://otel-collector:4317}
     depends_on:
       postgres:
         condition: service_healthy
       redis:
-        condition: service_started
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3010/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
 
   supplier-management:
     build:
@@ -199,16 +292,22 @@ services:
       args:
         PACKAGE: supplier-management
         BINARY: supplier-management
+    restart: unless-stopped
     environment:
-      DATABASE_URL: ${SUPPLIERS_DATABASE_URL:-postgres://postgres:postgres@postgres:5432/suppliers}
+      DATABASE_URL: ${SUPPLIERS_DATABASE_URL}
       REDIS_URL: ${REDIS_URL:-redis://redis:6379}
       SERVICE_PORT: 3011
-      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://otel-collector:4317}
     depends_on:
       postgres:
         condition: service_healthy
       redis:
-        condition: service_started
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3011/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
 
   analytics:
     build:
@@ -217,19 +316,28 @@ services:
       args:
         PACKAGE: analytics
         BINARY: analytics
+    restart: unless-stopped
     environment:
-      DATABASE_URL: ${ANALYTICS_DATABASE_URL:-postgres://postgres:postgres@timescaledb:5432/analytics_service}
+      DATABASE_URL: ${ANALYTICS_DATABASE_URL}
       REDIS_URL: ${REDIS_URL:-redis://redis:6379}
-      RABBITMQ_URL: ${RABBITMQ_URL:-amqp://guest:guest@rabbitmq:5672/%2f}
+      RABBITMQ_URL: ${RABBITMQ_URL}
       SERVICE_PORT: 3007
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://otel-collector:4317}
     depends_on:
       timescaledb:
-        condition: service_started
+        condition: service_healthy
       redis:
-        condition: service_started
+        condition: service_healthy
       rabbitmq:
-        condition: service_started
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3007/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
 
 volumes:
   postgres-data:
   timescale-data:
+  prometheus-data:
+  grafana-data:

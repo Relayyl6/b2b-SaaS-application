@@ -12,7 +12,6 @@ use dotenvy::dotenv;
 use redis::Client;
 use sqlx::postgres::PgPoolOptions;
 use std::env;
-use tokio;
 use tokio::spawn;
 use tracing::{error, subscriber};
 use tracing_subscriber::FmtSubscriber;
@@ -62,12 +61,19 @@ async fn main() -> std::io::Result<()> {
     let rabbitconsume = web::Data::new(RabbitConsumer::new(&pool));
     let consumer = rabbitconsume.clone();
 
-    // choose role: worker, publisher sample, dashboard. For demo run worker + dashboard.
     let pool_clone = pool.clone();
     let redis_client_clone = redis_client.clone();
     spawn(async move {
         if let Err(e) = consumer.run(&pool_clone, &redis_client_clone).await {
-            error!("Worker error: {:?}", e);
+            error!("Rabbit Worker error: {:?}", e);
+        }
+    });
+
+    let pool_clone_redis = pool.clone();
+    let redis_client_clone_2 = redis_client.clone();
+    spawn(async move {
+        if let Err(e) = crate::worker::redis_consumer::run_redis_consumer(pool_clone_redis, redis_client_clone_2).await {
+            error!("Redis Worker error: {:?}", e);
         }
     });
 

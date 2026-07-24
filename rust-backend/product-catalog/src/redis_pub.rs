@@ -6,7 +6,7 @@ pub struct RedisPublisher {
 }
 
 impl RedisPublisher {
-    pub async fn new(redis_url: &str) -> Result<Self, Box<dyn std::error::Error>> {
+    pub async fn new(redis_url: &str) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
         Ok(Self {
             publisher: StreamPublisher::new(redis_url)?,
         })
@@ -17,7 +17,7 @@ impl RedisPublisher {
         &self,
         event_type: &str,
         message: &T,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         self.publisher.publish(event_type, message).await?;
         Ok(())
     }

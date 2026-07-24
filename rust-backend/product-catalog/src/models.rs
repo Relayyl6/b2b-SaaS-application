@@ -16,8 +16,11 @@ pub struct Product {
     pub quantity: i32,
     pub available: bool,
     pub low_stock_threshold: i32,
+    pub sku: Option<String>,
+    pub variants: Option<serde_json::Value>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
+    pub deleted_at: Option<DateTime<Utc>>,
 }
 
 #[derive(Debug, Serialize, Deserialize, FromRow)]
@@ -51,6 +54,8 @@ pub struct CreateProductRequest {
     pub quantity: Option<i32>,
     pub available: Option<bool>,
     pub low_stock_threshold: Option<i32>, // <- new
+    pub sku: Option<String>,
+    pub variants: Option<serde_json::Value>,
 }
 
 #[allow(dead_code)]
@@ -66,6 +71,8 @@ pub struct UpdateProductRequest {
     pub available: Option<bool>,
     pub quantity_change: Option<i32>,
     pub low_stock_threshold: Option<i32>,
+    pub sku: Option<String>,
+    pub variants: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -123,4 +130,17 @@ pub struct ProductEvent {
     pub timestamp: Option<DateTime<Utc>>,
     pub expires_at: Option<DateTime<Utc>>,
     pub user_id: Option<Uuid>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_product_event_default() {
+        let event = ProductEvent::default();
+        assert_eq!(event.event_type, "");
+        assert_eq!(event.name, None);
+        assert_eq!(event.quantity_change, None);
+    }
 }

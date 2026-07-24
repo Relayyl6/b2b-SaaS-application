@@ -93,10 +93,29 @@ mod tests {
     use super::ShipmentStatus;
 
     #[test]
-    fn validates_state_transitions() {
+    fn validates_all_state_transitions() {
+        // Pending transitions
         assert!(ShipmentStatus::Pending.can_transition_to(&ShipmentStatus::Intransit));
+        assert!(ShipmentStatus::Pending.can_transition_to(&ShipmentStatus::Cancelled));
+        assert!(ShipmentStatus::Pending.can_transition_to(&ShipmentStatus::Pending));
+        assert!(!ShipmentStatus::Pending.can_transition_to(&ShipmentStatus::Delivered));
+
+        // Intransit transitions
         assert!(ShipmentStatus::Intransit.can_transition_to(&ShipmentStatus::Delivered));
+        assert!(ShipmentStatus::Intransit.can_transition_to(&ShipmentStatus::Cancelled));
+        assert!(ShipmentStatus::Intransit.can_transition_to(&ShipmentStatus::Intransit));
+        assert!(!ShipmentStatus::Intransit.can_transition_to(&ShipmentStatus::Pending));
+
+        // Delivered transitions
+        assert!(ShipmentStatus::Delivered.can_transition_to(&ShipmentStatus::Delivered));
         assert!(!ShipmentStatus::Delivered.can_transition_to(&ShipmentStatus::Pending));
+        assert!(!ShipmentStatus::Delivered.can_transition_to(&ShipmentStatus::Intransit));
+        assert!(!ShipmentStatus::Delivered.can_transition_to(&ShipmentStatus::Cancelled));
+
+        // Cancelled transitions
+        assert!(ShipmentStatus::Cancelled.can_transition_to(&ShipmentStatus::Cancelled));
+        assert!(!ShipmentStatus::Cancelled.can_transition_to(&ShipmentStatus::Pending));
         assert!(!ShipmentStatus::Cancelled.can_transition_to(&ShipmentStatus::Intransit));
+        assert!(!ShipmentStatus::Cancelled.can_transition_to(&ShipmentStatus::Delivered));
     }
 }

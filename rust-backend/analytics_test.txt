@@ -1,0 +1,83 @@
+    Blocking waiting for file lock on artifact directory
+   Compiling platform v0.1.0 (C:\Users\USER\Documents\Previous\E-commerce\b2b-SaaS-application\rust-backend\platform)
+   Compiling analytics v0.1.0 (C:\Users\USER\Documents\Previous\E-commerce\b2b-SaaS-application\rust-backend\analytics)
+warning: unused import: `super::*`
+ --> analytics\src\tests\test.rs:3:9
+  |
+3 |     use super::*;
+  |         ^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: variants `MissingKey` and `InvalidUuid` are never constructed
+  --> analytics\src\events.rs:10:5
+   |
+ 8 | pub enum EventError {
+   |          ---------- variants in this enum
+ 9 |     #[error("invalid event data: missing key {0}")]
+10 |     MissingKey(String),
+   |     ^^^^^^^^^^
+...
+13 |     InvalidUuid,
+   |     ^^^^^^^^^^^
+   |
+   = note: `EventError` has a derived impl for the trait `Debug`, but this is intentionally ignored during dead code analysis
+   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: field `pool` is never read
+  --> analytics\src\handlers.rs:12:5
+   |
+11 | pub struct AnalyticsRepo {
+   |            ------------- field in this struct
+12 |     pool: PgPool,
+   |     ^^^^
+   |
+   = note: `AnalyticsRepo` has a derived impl for the trait `Clone`, but this is intentionally ignored during dead code analysis
+
+warning: struct `AnalyticsRequestQuery` is never constructed
+  --> analytics\src\models.rs:56:12
+   |
+56 | pub struct AnalyticsRequestQuery {
+   |            ^^^^^^^^^^^^^^^^^^^^^
+
+warning: enum `PublishError` is never used
+ --> analytics\src\publisher.rs:9:10
+  |
+9 | pub enum PublishError {
+  |          ^^^^^^^^^^^^
+
+warning: function `publish_example_event` is never used
+  --> analytics\src\publisher.rs:17:14
+   |
+17 | pub async fn publish_example_event(ev: Event) -> Result<(), PublishError> {
+   |              ^^^^^^^^^^^^^^^^^^^^^
+
+warning: field `pool` is never read
+  --> analytics\src\worker\consumer.rs:21:9
+   |
+20 | pub struct RabbitConsumer {
+   |            -------------- field in this struct
+21 |     pub pool: PgPool,
+   |         ^^^^
+
+warning: `analytics` (bin "analytics" test) generated 7 warnings (run `cargo fix --bin "analytics" -p analytics --tests` to apply 1 suggestion)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 48.55s
+warning: the following packages contain code that will be rejected by a future version of Rust: redis v0.25.4, sqlx-postgres v0.7.4
+note: to see what the problems were, use the option `--future-incompat-report`, or run `cargo report future-incompatibilities --id 1`
+     Running unittests src\main.rs (target\debug\deps\analytics-b36695ef72000511.exe)
+
+running 11 tests
+test events::tests::test_allowed_group_by ... ok
+test events::tests::test_extract_primary_id ... ok
+test events::tests::test_parse_window_to_interval ... ok
+test tests::test::tests::test_order_event_extracts_order_id ... ok
+test tests::test::tests::test_event_new_serializes_data ... ok
+test tests::test::tests::test_product_event_extracts_product_id ... ok
+test tests::test::tests::test_unknown_event_generates_new_id ... ok
+test events::tests::test_metric_table_map ... ok
+test handlers::tests::test_analytics_handler_missing_metric ... ok
+test handlers::tests::test_analytics_handler_unknown_metric ... ok
+test handlers::tests::test_analytics_handler_invalid_group_by ... ok
+
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+

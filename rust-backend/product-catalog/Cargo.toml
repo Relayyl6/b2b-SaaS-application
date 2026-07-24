@@ -18,7 +18,7 @@ sha1.workspace = true
 sqlx = { workspace = true, features = ["macros"] }
 thiserror.workspace = true
 tokio.workspace = true
-tokio-rustls.workspace = true
+tokio-native-tls.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
 uuid.workspace = true

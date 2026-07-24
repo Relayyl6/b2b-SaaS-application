@@ -32,7 +32,8 @@ impl AnalyticsEvent {
             return self.supplier_id.unwrap_or_else(Uuid::new_v4);
         }
         if self.event_type.starts_with("logistics.") {
-            return self.shipment_id.unwrap_or_else(Uuid::new_v4);
+            // No shipment_id available in AnalyticsEvent, return a new UUID
+            return Uuid::new_v4();
         }
         // default for unknown events
         Uuid::new_v4()
@@ -68,6 +69,7 @@ pub async fn metric_table_map() -> HashMap<&'static str, &'static str> {
     m.insert("payments", "analytics.payments_daily");
     m.insert("notifications", "analytics.notifications_daily");
     m.insert("top_products_7d", "analytics.top_products_7d");
+    m
 }
 
 /// Whitelist of allowed group_by columns per metric (prevents injection and invalid columns)
@@ -108,4 +110,63 @@ pub fn parse_window_to_interval(window: &str) -> Option<String> {
         }
     }
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_extract_primary_id() {
+        let mut ev = AnalyticsEvent {
+            event_type: "order.created".to_string(),
+            order_id: Some(Uuid::new_v4()),
+            product_id: None,
+            supplier_id: None,
+            user_id: None,
+            name: None,
+            description: None,
+            price: None,
+            category: None,
+            low_stock_threshold: None,
+            unit: None,
+            available: None,
+            quantity_change: None,
+            quantity: None,
+            reservation_id: None,
+            timestamp: None,
+            expires_at: None,
+        };
+        assert_eq!(ev.extract_primary_id(), ev.order_id.unwrap());
+
+        ev.event_type = "product.updated".to_string();
+        ev.product_id = Some(Uuid::new_v4());
+        assert_eq!(ev.extract_primary_id(), ev.product_id.unwrap());
+
+        ev.event_type = "user.created".to_string();
+        ev.user_id = Some(Uuid::new_v4());
+        assert_eq!(ev.extract_primary_id(), ev.user_id.unwrap());
+    }
+
+    #[tokio::test]
+    async fn test_metric_table_map() {
+        let map = metric_table_map().await;
+        assert_eq!(map.get("signups"), Some(&"analytics.user_signups_daily"));
+        assert_eq!(map.get("revenue"), Some(&"analytics.revenue_daily"));
+        assert!(map.get("unknown_metric").is_none());
+    }
+
+    #[test]
+    fn test_allowed_group_by() {
+        assert_eq!(allowed_group_by("signups"), &["signup_source", "signup_platform", "country", "day"]);
+        assert_eq!(allowed_group_by("unknown_metric"), &["day"]);
+    }
+
+    #[test]
+    fn test_parse_window_to_interval() {
+        assert_eq!(parse_window_to_interval("30d"), Some("30 days".to_string()));
+        assert_eq!(parse_window_to_interval("12h"), Some("12 hours".to_string()));
+        assert_eq!(parse_window_to_interval("6mo"), Some("6 months".to_string()));
+        assert_eq!(parse_window_to_interval("invalid"), None);
+    }
 }

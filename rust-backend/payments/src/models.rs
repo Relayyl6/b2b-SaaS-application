@@ -25,7 +25,7 @@ pub struct PaymentIntent {
     pub supplier_id: Uuid,
     pub product_id: Uuid,
     pub quantity: i32,
-    pub amount: f64,
+    pub amount: i64,
     pub currency: String,
     pub provider: String,
     pub provider_reference: Option<String>,
@@ -43,7 +43,7 @@ pub struct CreatePaymentIntentRequest {
     pub supplier_id: Uuid,
     pub product_id: Uuid,
     pub quantity: i32,
-    pub amount: f64,
+    pub amount: i64,
     pub currency: Option<String>,
     pub provider: Option<String>,
     pub metadata: Option<Value>,
@@ -66,9 +66,30 @@ pub struct PaymentEvent {
     pub supplier_id: Uuid,
     pub product_id: Uuid,
     pub quantity: i32,
-    pub amount: f64,
+    pub amount: i64,
     pub currency: String,
     pub provider: String,
     pub provider_reference: Option<String>,
     pub timestamp: DateTime<Utc>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_payment_status_serialization() {
+        assert_eq!(
+            serde_json::to_string(&PaymentStatus::RequiresPaymentMethod).unwrap(),
+            "\"requires_payment_method\""
+        );
+        assert_eq!(
+            serde_json::to_string(&PaymentStatus::Processing).unwrap(),
+            "\"processing\""
+        );
+        assert_eq!(
+            serde_json::to_string(&PaymentStatus::Succeeded).unwrap(),
+            "\"succeeded\""
+        );
+    }
 }

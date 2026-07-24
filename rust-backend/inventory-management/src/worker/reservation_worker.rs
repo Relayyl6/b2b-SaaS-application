@@ -1,3 +1,4 @@
+use crate::models::ExpiredReservationRow;
 use crate::redis_pub::RedisPublisher;
 use actix_web::web::Data;
 use chrono::Utc;
@@ -24,9 +25,9 @@ async fn clean_expired_reservations(
     pool: &PgPool,
     redis_pub: &RedisPublisher,
 ) -> Result<(), sqlx::Error> {
-    let expired = sqlx::query!(
+    let expired = sqlx::query_as::<_, ExpiredReservationRow>(
         r#"
-            SELECT reservation_id, product_id, order_id, qty, user_id
+            SELECT reservation_id, order_id, product_id, qty, user_id
             FROM reservations
             WHERE expires_at < NOW() AND released = false
         "#
@@ -36,27 +37,27 @@ async fn clean_expired_reservations(
 
     for res in expired {
         // Release stock
-        sqlx::query!(
+        sqlx::query(
             r#"
                 UPDATE inventory
                 SET reserved = reserved - $1
                 WHERE product_id = $2
             "#,
-            res.qty,
-            res.product_id
         )
+        .bind(res.qty)
+        .bind(res.product_id)
         .execute(pool)
         .await?;
 
         // Mark reservation as expired
-        sqlx::query!(
+        sqlx::query(
             r#"
                 UPDATE reservations
                 SET released = true
                 WHERE reservation_id = $1
             "#, // released = true basically means status = "expired"
-            res.reservation_id
         )
+        .bind(res.reservation_id)
         .execute(pool)
         .await?;
 

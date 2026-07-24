@@ -9,6 +9,11 @@ pub struct NotificationProvider {
     client: reqwest::Client,
     email_webhook_url: Option<String>,
     sms_webhook_url: Option<String>,
+    sendgrid_api_key: Option<String>,
+    sendgrid_from_email: Option<String>,
+    twilio_account_sid: Option<String>,
+    twilio_auth_token: Option<String>,
+    twilio_from_number: Option<String>,
     expo_push_url: String,
     expo_access_token: Option<String>,
 }
@@ -22,6 +27,11 @@ impl NotificationProvider {
             client: reqwest::Client::new(),
             email_webhook_url: env_non_empty("EMAIL_WEBHOOK_URL"),
             sms_webhook_url: env_non_empty("SMS_WEBHOOK_URL"),
+            sendgrid_api_key: env_non_empty("SENDGRID_API_KEY"),
+            sendgrid_from_email: env_non_empty("SENDGRID_FROM_EMAIL"),
+            twilio_account_sid: env_non_empty("TWILIO_ACCOUNT_SID"),
+            twilio_auth_token: env_non_empty("TWILIO_AUTH_TOKEN"),
+            twilio_from_number: env_non_empty("TWILIO_FROM_NUMBER"),
             expo_push_url: env::var("EXPO_PUSH_URL")
                 .unwrap_or_else(|_| "https://exp.host/--/api/v2/push/send".to_string()),
             expo_access_token: env_non_empty("EXPO_ACCESS_TOKEN"),
@@ -46,8 +56,32 @@ impl NotificationProvider {
     }
 
     async fn send_email(&self, notification: &Notification) -> Result<(), String> {
+        if let (Some(api_key), Some(from_email)) = (&self.sendgrid_api_key, &self.sendgrid_from_email) {
+            let response = self
+                .client
+                .post("https://api.sendgrid.com/v3/mail/send")
+                .header(AUTHORIZATION, format!("Bearer {}", api_key))
+                .header(CONTENT_TYPE, "application/json")
+                .json(&json!({
+                    "personalizations": [{
+                        "to": [{"email": notification.recipient}]
+                    }],
+                    "from": {"email": from_email},
+                    "subject": notification.subject,
+                    "content": [{
+                        "type": "text/plain",
+                        "value": notification.body
+                    }]
+                }))
+                .send()
+                .await
+                .map_err(|e| format!("sendgrid request failed: {e}"))?;
+
+            return ensure_success(response, "sendgrid").await;
+        }
+
         let Some(url) = &self.email_webhook_url else {
-            return Err("EMAIL_WEBHOOK_URL is not configured".to_string());
+            return Err("EMAIL_WEBHOOK_URL or SENDGRID_API_KEY is not configured".to_string());
         };
 
         let response = self
@@ -68,8 +102,26 @@ impl NotificationProvider {
     }
 
     async fn send_sms(&self, notification: &Notification) -> Result<(), String> {
+        if let (Some(sid), Some(token), Some(from)) = (&self.twilio_account_sid, &self.twilio_auth_token, &self.twilio_from_number) {
+            let url = format!("https://api.twilio.com/2010-04-01/Accounts/{sid}/Messages.json");
+            let response = self
+                .client
+                .post(&url)
+                .basic_auth(sid, Some(token))
+                .form(&[
+                    ("To", notification.recipient.as_str()),
+                    ("From", from.as_str()),
+                    ("Body", notification.body.as_str()),
+                ])
+                .send()
+                .await
+                .map_err(|e| format!("twilio request failed: {e}"))?;
+            
+            return ensure_success(response, "twilio").await;
+        }
+
         let Some(url) = &self.sms_webhook_url else {
-            return Err("SMS_WEBHOOK_URL is not configured".to_string());
+            return Err("SMS_WEBHOOK_URL or TWILIO_ACCOUNT_SID is not configured".to_string());
         };
 
         let response = self

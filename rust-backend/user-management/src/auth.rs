@@ -27,23 +27,42 @@ pub fn create_jwt(
     user_id: Uuid,
     role: &UserRole,
     secret: &str,
-) -> Result<String, jsonwebtoken::errors::Error> {
-    let expiration = chrono::Utc::now()
-        .checked_add_signed(chrono::Duration::hours(24))
+) -> Result<(String, String), jsonwebtoken::errors::Error> {
+    let access_exp = chrono::Utc::now()
+        .checked_add_signed(chrono::Duration::minutes(15))
         .unwrap()
         .timestamp() as usize;
 
-    let claims = Claims {
+    let refresh_exp = chrono::Utc::now()
+        .checked_add_signed(chrono::Duration::days(7))
+        .unwrap()
+        .timestamp() as usize;
+
+    let access_claims = Claims {
         sub: user_id,
         role: role.clone(),
-        exp: expiration,
+        exp: access_exp,
     };
 
-    encode(
+    let refresh_claims = Claims {
+        sub: user_id,
+        role: role.clone(),
+        exp: refresh_exp,
+    };
+
+    let access_token = encode(
         &Header::default(),
-        &claims,
+        &access_claims,
         &EncodingKey::from_secret(secret.as_ref()),
-    )
+    )?;
+
+    let refresh_token = encode(
+        &Header::default(),
+        &refresh_claims,
+        &EncodingKey::from_secret(secret.as_ref()),
+    )?;
+
+    Ok((access_token, refresh_token))
 }
 
 pub async fn user_exists(pool: &PgPool, email: &str) -> Result<bool, sqlx::Error> {
@@ -53,4 +72,48 @@ pub async fn user_exists(pool: &PgPool, email: &str) -> Result<bool, sqlx::Error
         .await?;
 
     Ok(row.is_some())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use jsonwebtoken::{decode, DecodingKey, Validation};
+
+    #[test]
+    fn test_password_hashing_and_verification() {
+        let password = "SuperSecretPassword123!";
+        let hash = hash_password(password);
+        
+        assert!(verify_password(&hash, password));
+        assert!(!verify_password(&hash, "WrongPassword"));
+    }
+
+    #[test]
+    fn test_create_jwt() {
+        let user_id = Uuid::new_v4();
+        let role = UserRole::Admin;
+        let secret = "test_secret";
+        
+        let (access, refresh) = create_jwt(user_id, &role, secret).unwrap();
+        
+        // verify access token
+        let decoded_access = decode::<Claims>(
+            &access,
+            &DecodingKey::from_secret(secret.as_bytes()),
+            &Validation::default(),
+        ).unwrap();
+        
+        assert_eq!(decoded_access.claims.sub, user_id);
+        assert_eq!(decoded_access.claims.role, UserRole::Admin);
+        
+        // verify refresh token
+        let decoded_refresh = decode::<Claims>(
+            &refresh,
+            &DecodingKey::from_secret(secret.as_bytes()),
+            &Validation::default(),
+        ).unwrap();
+        
+        assert_eq!(decoded_refresh.claims.sub, user_id);
+        assert_eq!(decoded_refresh.claims.role, UserRole::Admin);
+    }
 }

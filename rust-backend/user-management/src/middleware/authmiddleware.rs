@@ -17,11 +17,12 @@ use crate::models::{Claims, Users};
 pub struct AuthMiddleware {
     pool: PgPool,
     jwt_secret: String,
+    redis_client: Option<redis::Client>,
 }
 
 impl AuthMiddleware {
-    pub fn new(pool: PgPool, jwt_secret: String) -> Self {
-        Self { pool, jwt_secret }
+    pub fn new(pool: PgPool, jwt_secret: String, redis_client: Option<redis::Client>) -> Self {
+        Self { pool, jwt_secret, redis_client }
     }
 }
 
@@ -41,6 +42,7 @@ where
             service: Rc::new(service),
             pool: self.pool.clone(),
             jwt_secret: self.jwt_secret.clone(),
+            redis_client: self.redis_client.clone(),
         }))
     }
 }
@@ -49,6 +51,7 @@ pub struct AuthMiddlewareMiddleware<S> {
     service: Rc<S>,
     pool: PgPool,
     jwt_secret: String,
+    redis_client: Option<redis::Client>,
 }
 
 impl<S, B> Service<ServiceRequest> for AuthMiddlewareMiddleware<S>
@@ -71,6 +74,7 @@ where
         let svc = self.service.clone();
         let pool = self.pool.clone();
         let jwt_secret = self.jwt_secret.clone();
+        let redis_client = self.redis_client.clone();
 
         Box::pin(async move {
             let token = req
@@ -88,14 +92,27 @@ where
             )
             .map_err(|_| actix_web::error::ErrorUnauthorized("Invalid or expired token"))?;
 
-            let revoked =
-                sqlx::query_scalar::<_, i64>("SELECT 1 FROM revoked_tokens WHERE token = $1")
-                    .bind(&token)
-                    .fetch_optional(&pool)
-                    .await
-                    .map_err(|_| actix_web::error::ErrorInternalServerError("DB error"))?;
+            let mut is_revoked = false;
+            if let Some(client) = &redis_client {
+                if let Ok(mut conn) = client.get_multiplexed_async_connection().await {
+                    let redis_key = format!("revoked_token:{}", token);
+                    if let Ok(true) = redis::cmd("EXISTS").arg(&redis_key).query_async::<_, bool>(&mut conn).await {
+                        is_revoked = true;
+                    }
+                }
+            } else {
+                let revoked =
+                    sqlx::query_scalar::<_, i64>("SELECT 1 FROM revoked_tokens WHERE token = $1 LIMIT 1")
+                        .bind(&token)
+                        .fetch_optional(&pool)
+                        .await
+                        .unwrap_or(None);
+                if revoked.is_some() {
+                    is_revoked = true;
+                }
+            }
 
-            if revoked.is_some() {
+            if is_revoked {
                 return Err(actix_web::error::ErrorUnauthorized("Token revoked"));
             }
 

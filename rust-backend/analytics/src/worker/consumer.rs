@@ -186,7 +186,7 @@ impl RabbitConsumer {
 
             channel
                 .basic_publish(
-                    "exchange_name",
+                    exchange_name,
                     "analytics_queue",
                     BasicPublishOptions::default(),
                     &delivery.data,
@@ -246,7 +246,7 @@ async fn update_redis(
     event_data: &Value,
     redis_client: &web::Data<redis::Client>,
 ) -> redis::RedisResult<i64> {
-    let mut redis_conn = redis_client.get_async_connection().await?;
+    let mut redis_conn = redis_client.get_multiplexed_async_connection().await?;
     let result = match event_data.get("event_type").and_then(|v| v.as_str()) {
         Some("product.viewed") => {
             if let Some(product_id) = event_data.get("product_id").and_then(|v| v.as_str()) {

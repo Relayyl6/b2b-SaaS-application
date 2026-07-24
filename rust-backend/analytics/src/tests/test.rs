@@ -2,6 +2,8 @@
 mod tests {
     use super::*;
     use chrono::Utc;
+    use uuid::Uuid;
+    use crate::models::{AnalyticsEvent, Event};
 
     #[test]
     fn test_order_event_extracts_order_id() {

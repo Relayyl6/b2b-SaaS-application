@@ -3,7 +3,6 @@ use dotenvy::dotenv;
 use lapin::{BasicProperties, Connection, ConnectionProperties, options::*, types::FieldTable};
 use std::env;
 use thiserror::Error;
-use tracing::error;
 use tracing::info;
 
 #[derive(Error, Debug)]

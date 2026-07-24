@@ -2,6 +2,7 @@ mod db;
 mod handlers;
 mod models;
 mod redis_sub;
+mod stripe;
 
 use actix_web::{web, App, HttpServer};
 use dotenvy::dotenv;
@@ -72,6 +73,14 @@ async fn main() -> std::io::Result<()> {
             .route(
                 "/payments/webhooks",
                 web::post().to(handlers::payment_webhook),
+            )
+            .route(
+                "/payments/intents/{id}/refund",
+                web::post().to(handlers::refund_payment_endpoint),
+            )
+            .route(
+                "/payments/intents/{id}/transfer",
+                web::post().to(handlers::transfer_payment_endpoint),
             )
     })
     .bind(format!("0.0.0.0:{port}"))?

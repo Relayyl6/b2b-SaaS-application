@@ -4,6 +4,7 @@ mod models;
 mod provider;
 mod redis_sub;
 mod worker;
+mod dlq_pub;
 
 use actix_web::{web, App, HttpServer};
 use dotenvy::dotenv;
@@ -40,8 +41,9 @@ async fn main() -> std::io::Result<()> {
 
     let repo = web::Data::new(NotificationRepo::new(pool));
     let provider = web::Data::new(NotificationProvider::from_env());
+    let dlq_publisher = web::Data::new(dlq_pub::DlqPublisher::new().await);
 
-    worker::start_delivery_worker(repo.clone(), provider.clone()).await;
+    worker::start_delivery_worker(repo.clone(), provider.clone(), dlq_publisher.clone()).await;
 
     if redis_url.is_some() {
         let repo_clone = repo.clone();
@@ -87,6 +89,14 @@ async fn main() -> std::io::Result<()> {
             .route(
                 "/notification-devices/{id}",
                 web::delete().to(handlers::disable_device),
+            )
+            .route(
+                "/notification-preferences/user/{user_id}",
+                web::get().to(handlers::get_preferences),
+            )
+            .route(
+                "/notification-preferences/user/{user_id}",
+                web::put().to(handlers::update_preferences),
             )
     })
     .bind(format!("0.0.0.0:{port}"))?
