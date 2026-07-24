@@ -67,7 +67,7 @@ where
         self.service.poll_ready(ctx)
     }
 
-    fn call(&self, mut req: ServiceRequest) -> Self::Future {
+    fn call(&self, req: ServiceRequest) -> Self::Future {
         let svc = self.service.clone();
         let pool = self.pool.clone();
         let jwt_secret = self.jwt_secret.clone();

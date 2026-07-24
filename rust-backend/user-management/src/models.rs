@@ -37,11 +37,13 @@ pub struct SignInRequest {
     pub password: String,
 }
 
+#[allow(dead_code)] // used by sign_out handler via JSON deserialisation
 #[derive(Serialize, Deserialize, Debug)]
 pub struct SignOutRequest {
     pub token: String,
 }
 
+#[allow(dead_code)] // response type for auth endpoints
 #[derive(Serialize, Deserialize, Debug)]
 pub struct AuthResponse {
     pub user: Users,
@@ -64,6 +66,7 @@ pub struct UpdateUserRequest {
     pub is_active: Option<bool>,
 }
 
+#[allow(dead_code)] // used by delete_user handler via JSON deserialisation
 #[derive(Serialize, Deserialize, Debug)]
 pub struct DeleteUserRequest {
     pub user_id: String,

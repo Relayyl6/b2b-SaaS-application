@@ -22,6 +22,7 @@ const EVENTS: &[&str] = &[
     "inventory.released",
     "inventory.finalized",
     "order.delivered",
+    "logistics.shipment_created",
     "logistics.shipment_updated",
     "logistics.shipment_cancelled",
 ];
@@ -96,6 +97,7 @@ async fn handle_logistics_event(
     };
 
     let status = match event_type {
+        "logistics.shipment_created" => Some(OrderStatus::Confirmed), // Optional mapping
         "logistics.shipment_cancelled" => Some(OrderStatus::Cancelled),
         "logistics.shipment_updated" => match value.get("status").and_then(|v| v.as_str()) {
             Some("intransit") => Some(OrderStatus::Shipped),

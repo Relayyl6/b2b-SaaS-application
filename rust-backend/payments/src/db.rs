@@ -86,4 +86,14 @@ impl PaymentRepo {
         .fetch_one(&self.pool)
         .await
     }
+
+    pub async fn cancel_by_order_id(&self, order_id: Uuid) -> Result<(), sqlx::Error> {
+        sqlx::query(
+            "UPDATE payment_intents SET status = 'cancelled', updated_at = NOW() WHERE order_id = $1 AND status != 'succeeded'"
+        )
+        .bind(order_id)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
 }

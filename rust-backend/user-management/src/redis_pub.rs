@@ -5,6 +5,7 @@ use tokio::time::{Duration, sleep};
 
 #[derive(Clone)]
 pub struct RedisPublisher {
+    #[allow(dead_code)] // used indirectly via get_multiplexed_async_connection
     client: Client,
     enabled: bool,
 }
@@ -18,6 +19,7 @@ impl RedisPublisher {
         })
     }
 
+    #[allow(dead_code)] // public API for callers that need an awaitable publish
     pub async fn publish<T: serde::Serialize>(
         &self,
         channel: &str,

@@ -31,6 +31,7 @@ pub struct CreateOrderRequest {
 
 #[derive(Deserialize)]
 pub struct UpdateOrderStatus {
+    #[allow(dead_code)] // deserialized from request body; reserved for validation/future use
     pub id: Uuid,
     pub product_id: Option<Uuid>,
     pub user_id: Option<Uuid>,

@@ -1,6 +1,7 @@
 mod db;
 mod handlers;
 mod models;
+mod redis_sub;
 
 use actix_web::{web, App, HttpServer};
 use dotenvy::dotenv;
@@ -37,6 +38,13 @@ async fn main() -> std::io::Result<()> {
     let publisher = web::Data::new(match redis_url {
         Some(url) => StreamPublisher::new(&url).unwrap_or_else(|_| StreamPublisher::noop()),
         None => StreamPublisher::noop(),
+    });
+
+    let repo_clone = repo.clone();
+    tokio::spawn(async move {
+        if let Err(e) = redis_sub::listen_to_redis_events(repo_clone).await {
+            tracing::error!("Payments Redis subscriber failed: {}", e);
+        }
     });
 
     HttpServer::new(move || {
