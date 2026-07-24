@@ -1,9 +1,9 @@
-use chrono::Utc;
-use sqlx::PgPool;
-use tokio::time::{interval, Duration};
-use serde_json::json;
 use crate::redis_pub::RedisPublisher;
 use actix_web::web::Data;
+use chrono::Utc;
+use serde_json::json;
+use sqlx::PgPool;
+use tokio::time::{interval, Duration};
 
 pub async fn start_reservation_expiration_worker(pool: PgPool, redis_pub: Data<RedisPublisher>) {
     tokio::spawn(async move {
@@ -22,7 +22,7 @@ pub async fn start_reservation_expiration_worker(pool: PgPool, redis_pub: Data<R
 
 async fn clean_expired_reservations(
     pool: &PgPool,
-    redis_pub: &RedisPublisher
+    redis_pub: &RedisPublisher,
 ) -> Result<(), sqlx::Error> {
     let expired = sqlx::query!(
         r#"
@@ -70,7 +70,10 @@ async fn clean_expired_reservations(
             "timestamp": Utc::now().timestamp_millis(),
         });
 
-        if let Err(e) = redis_pub.publish("inventory.reservation_expired", &event).await {
+        if let Err(e) = redis_pub
+            .publish("inventory.reservation_expired", &event)
+            .await
+        {
             eprintln!("Redis publish error: {:?}", e)
         };
     }

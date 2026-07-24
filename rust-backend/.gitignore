@@ -1,10 +1,17 @@
 /target
 */target
-Cargo.lock
+
+# Do NOT ignore Cargo.lock for binary workspaces — it ensures reproducible builds.
+# Cargo.lock
+
+# Per-service .env files (contain secrets, never commit)
 .env
-/product-catalog/.env
-/inventory-management/.env
-/user-management/.env
-/order-service/.env
 /analytics/.env
-/logiistics/.env
+/inventory-management/.env
+/logistics/.env
+/notifications/.env
+/order-service/.env
+/payments/.env
+/product-catalog/.env
+/supplier-management/.env
+/user-management/.env

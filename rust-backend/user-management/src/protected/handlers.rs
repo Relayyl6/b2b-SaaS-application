@@ -1,10 +1,10 @@
-use actix_web::{web, HttpResponse, HttpRequest};
-use actix_web::HttpMessage;
-use crate::models::{Users, UpdateUserRequest};
-use uuid::Uuid;
 use crate::db::UserRepo;
 use crate::models::UserRole;
+use crate::models::{UpdateUserRequest, Users};
+use actix_web::HttpMessage;
+use actix_web::{HttpRequest, HttpResponse, web};
 use serde_json;
+use uuid::Uuid;
 
 pub async fn update_user_handler(
     req: HttpRequest,
@@ -21,7 +21,7 @@ pub async fn update_user_handler(
     let user_id = path.into_inner();
 
     // Optional: check if user has permission (e.g., admin or self)
-    if auth_user.id != user_id && auth_user.role == UserRole::Admin  {
+    if auth_user.id != user_id && auth_user.role == UserRole::Admin {
         return HttpResponse::Forbidden().body("Not authorized");
     }
 

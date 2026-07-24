@@ -1,21 +1,21 @@
 mod events;
-mod worker;
-mod handler;
-mod publisher;
+mod handlers;
 mod models;
+mod publisher;
 mod tests;
+mod worker;
 
+use crate::handlers::AnalyticsRepo;
 use crate::worker::consumer::RabbitConsumer;
-use tokio::spawn;
-use tracing_subscriber::{FmtSubscriber};
-use tracing::{subscriber, error};
-use tokio;
-use redis::Client;
-use std::env;
-use actix_web::{web, App, HttpServer};
+use actix_web::{App, HttpServer, web};
 use dotenvy::dotenv;
+use redis::Client;
 use sqlx::postgres::PgPoolOptions;
-use crate::handler::AnalyticsRepo;
+use std::env;
+use tokio;
+use tokio::spawn;
+use tracing::{error, subscriber};
+use tracing_subscriber::FmtSubscriber;
 
 // The analytics service might consume events like:
 //          InventoryViewed
@@ -35,7 +35,7 @@ async fn main() -> std::io::Result<()> {
     let db_url = env::var("DATABASE_URL").expect("Database url not set");
     let redis_url = env::var("REDIS_URL");
 
-        // Redis client
+    // Redis client
     let redis_client = web::Data::new(
         redis_url
             .as_ref()
@@ -44,7 +44,7 @@ async fn main() -> std::io::Result<()> {
                 eprintln!("⚠️ REDIS_URL not set — using noop client.");
                 Ok(Client::open("redis://localhost:6379").unwrap())
             })
-            .unwrap()
+            .unwrap(),
     );
 
     let pool = PgPoolOptions::new()
@@ -66,22 +66,22 @@ async fn main() -> std::io::Result<()> {
     let pool_clone = pool.clone();
     let redis_client_clone = redis_client.clone();
     spawn(async move {
-        if let Err(e) = consumer.run(
-            &pool_clone,
-            &redis_client_clone
-        ).await {
+        if let Err(e) = consumer.run(&pool_clone, &redis_client_clone).await {
             error!("Worker error: {:?}", e);
         }
     });
 
-    println!("Analytics Service running on htts://localshost: port");
+    tracing::info!("Analytics Service listening on 0.0.0.0:{}", port);
 
     let _ = HttpServer::new(move || {
         App::new()
             .app_data(pool.clone())
             .app_data(repo.clone())
             .app_data(rabbitconsume.clone())
-            .route("/analytics", web::post().to(handler::AnalyticsRepo::analytics_handler))
+            .route(
+                "/analytics",
+                web::post().to(handlers::AnalyticsRepo::analytics_handler),
+            )
     })
     .bind(format!("0.0.0.0:{}", port))?
     .run()

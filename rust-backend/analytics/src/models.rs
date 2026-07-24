@@ -1,8 +1,8 @@
-use serde::{Serialize, Deserialize};
-use uuid::Uuid;
-use std::collections::HashMap;
 use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
+use std::collections::HashMap;
+use uuid::Uuid;
 
 // =============================
 //  ANALYTICS EVENT (RAW EVENT)
@@ -37,7 +37,6 @@ pub struct AnalyticsEvent {
     pub expires_at: Option<DateTime<Utc>>,
 }
 
-
 // =============================
 // (what is published to RabbitMQ)
 // =============================
@@ -48,7 +47,6 @@ pub struct Event {
     pub event_timestamp: Option<DateTime<Utc>>,
     pub data: serde_json::Value,
 }
-
 
 // =============================
 // QUERY STRUCT
@@ -70,7 +68,6 @@ pub struct AnalyticsRequestQuery {
     pub filters: HashMap<String, String>,
 }
 
-
 // =============================
 // REQUEST BODY STRUCT
 // (POST body for analytics queries)
@@ -87,19 +84,3 @@ pub struct AnalyticsRequestBody {
     // Additional dynamic filters
     pub filters: Option<HashMap<String, String>>,
 }
-
-
-// =============================
-// MERGED STRUCT (FINAL RESULT)
-// =============================
-// #[derive(Debug, Clone)]
-// pub struct AnalyticsResolvedParams {
-//     pub metric: String,
-//     pub window: Option<String>,
-//     pub group_by: Option<String>,
-//     pub aggregate_field: Option<String>,
-//     pub limit: Option<i64>,
-//     pub order_by: Option<String>,
-
-//     pub filters: HashMap<String, String>,
-// }

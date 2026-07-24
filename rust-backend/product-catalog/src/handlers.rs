@@ -108,7 +108,7 @@ pub async fn update_product(
     req: web::Json<UpdateProductRequest>,
 ) -> impl Responder {
     let (supplier_id, product_id) = path.into_inner();
-    let mut update_data = req.into_inner();
+    let update_data = req.into_inner();
 
     if update_data.quantity.is_some() && update_data.quantity_change.is_some() {
         return HttpResponse::BadRequest()

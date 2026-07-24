@@ -1,7 +1,7 @@
 // src/db.rs
+use crate::models::{CreateInventoryRequest, Inventory, UpdateStockRequest};
 use sqlx::PgPool;
 use uuid::Uuid;
-use crate::models::{Inventory, UpdateStockRequest, CreateInventoryRequest};
 
 #[derive(Clone)]
 pub struct InventoryRepo {
@@ -15,7 +15,7 @@ impl InventoryRepo {
 
     pub async fn get_by_supplier(&self, supplier_id: Uuid) -> Result<Vec<Inventory>, sqlx::Error> {
         sqlx::query_as::<_, Inventory>(
-            "SELECT * FROM inventory WHERE supplier_id = $1 ORDER BY name"
+            "SELECT * FROM inventory WHERE supplier_id = $1 ORDER BY name",
         )
         .bind(supplier_id)
         .fetch_all(&self.pool)
@@ -55,7 +55,7 @@ impl InventoryRepo {
                 updated_at = NOW()
             WHERE supplier_id = $10 AND product_id = $11
             RETURNING *
-            "#
+            "#,
         )
         .bind(req.name.as_ref())
         .bind(req.description.as_ref())
@@ -126,8 +126,7 @@ impl InventoryRepo {
         )
         .execute(&self.pool)
         .await?;
-    
+
         Ok(result.rows_affected())
     }
-
 }

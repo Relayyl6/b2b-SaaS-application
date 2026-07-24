@@ -8,39 +8,16 @@ use crate::db::ProductRepo;
 use crate::redis_pub::RedisPublisher;
 use actix_web::{App, HttpServer, web};
 use dotenvy::dotenv;
+use platform::{metrics, observability};
 use redis::Client as RedisClient;
 use sqlx::PgPool;
 use std::env;
 
-/// Starts the Product Catalog HTTP server after loading configuration, initializing logging,
-/// connecting to Postgres and running migrations, and configuring Redis publisher/client
-/// (falling back to a no-op publisher if Redis is unavailable).
-///
-/// Reads configuration from environment variables:
-/// - `DATABASE_URL` (required)
-/// - `REDIS_URL` (optional)
-/// - `SERVICE_PORT` (defaults to `3003`)
-///
-/// The server registers all product- and asset-related routes and binds to `0.0.0.0:{SERVICE_PORT}`.
-///
-/// # Examples
-///
-/// ```no_run
-/// // Requires a running Postgres instance and a DATABASE_URL environment variable.
-/// std::env::set_var("DATABASE_URL", "postgres://user:pass@localhost/product_catalog");
-/// // Optionally:
-/// // std::env::set_var("REDIS_URL", "redis://127.0.0.1:6379");
-/// // Start the service (runs until stopped)
-/// tokio::runtime::Runtime::new().unwrap().block_on(async { main().await.unwrap() });
-/// ```
-///
-/// # Returns
-///
-/// `Ok(())` if the server runs and exits without I/O errors, `Err` if binding or runtime I/O fails.
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
     dotenv().ok();
-    tracing_subscriber::fmt::init();
+    observability::init_observability("product-catalog");
+    metrics::init_metrics("product-catalog");
 
     let database_url = env::var("DATABASE_URL").expect("DATABASE_URL must be set");
     let redis_url = env::var("REDIS_URL").ok();
@@ -79,13 +56,14 @@ async fn main() -> std::io::Result<()> {
         .expect("redis client"),
     );
 
-    println!("Product Catalog Service running on localhost:{}", port);
+    tracing::info!("Product Catalog Service listening on 0.0.0.0:{}", port);
 
     HttpServer::new(move || {
         App::new()
             .app_data(repo.clone())
             .app_data(redis_pub.clone())
             .app_data(redis_client.clone())
+            .route("/metrics", web::get().to(metrics::metrics_handler))
             .route("/products", web::post().to(handlers::create_product))
             .route("/products/bulk", web::post().to(handlers::bulk_create))
             .route("/products/search", web::get().to(handlers::search_products))

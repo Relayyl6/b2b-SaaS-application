@@ -1,9 +1,8 @@
+use crate::models::OrderEvent;
 use crate::redis_pub::RedisPublisher;
 use chrono::Utc;
-use serde_json::json;
 use sqlx::PgPool;
 use tokio::time::{interval, Duration};
-use crate::models::OrderEvent;
 
 pub async fn start_order_expiration_worker(pool: PgPool, redis_pub: RedisPublisher) {
     tokio::spawn(async move {
@@ -21,24 +20,26 @@ pub async fn start_order_expiration_worker(pool: PgPool, redis_pub: RedisPublish
 }
 
 async fn fail_expired_orders(pool: &PgPool, redis_pub: &RedisPublisher) -> Result<(), sqlx::Error> {
-    let expired_orders = sqlx::query_as::<_, (uuid::Uuid, uuid::Uuid, uuid::Uuid)>(
-        "SELECT id, product_id, user_id FROM orders WHERE status = 'pending' AND expires_at < NOW()"
+    let expired_orders = sqlx::query_as::<_, (uuid::Uuid, uuid::Uuid, uuid::Uuid, uuid::Uuid, chrono::DateTime<Utc>)>(
+        "SELECT id, product_id, user_id, supplier_id, expires_at FROM orders WHERE status = 'pending' AND expires_at < NOW()"
     )
     .fetch_all(pool)
     .await?;
 
-    for (id, product_id, user_id) in expired_orders {
+    for (id, product_id, user_id, supplier_id, expires_at) in expired_orders {
         sqlx::query("UPDATE orders SET status = 'failed' WHERE id = $1")
             .bind(id)
             .execute(pool)
             .await?;
 
-        let event = OrderEvent{
-            "event_type": "order.failed".to_string(),
-            "order_id": Some(id),
-            "user_id": Some(user_id),
-            "product_id": Some(product_id),
-            "timestamp": Utc::now().timestamp_millis(),
+        let event = OrderEvent {
+            event_type: "order.failed".to_string(),
+            order_id: Some(id),
+            user_id: Some(user_id),
+            product_id,
+            supplier_id,
+            timestamp: Utc::now(),
+            expires_at,
             ..Default::default()
         };
 

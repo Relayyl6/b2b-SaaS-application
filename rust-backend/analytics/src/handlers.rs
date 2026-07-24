@@ -1,28 +1,26 @@
-use actix_web::{web, HttpResponse, Responder};
-use sqlx::{postgres::PgPool, QueryBuilder};
-use std::collections::HashMap;
+use crate::events::{allowed_group_by, metric_table_map, parse_window_to_interval};
 use crate::models::AnalyticsRequestBody;
-use crate::events::{metric_table_map, allowed_group_by, parse_window_to_interval};
-use serde_json::{json, Value};
-use sqlx::Row;
+use actix_web::{HttpResponse, Responder, web};
+use serde_json::{Value, json};
 use sqlx::Postgres;
+use sqlx::Row;
+use sqlx::{QueryBuilder, postgres::PgPool};
+use std::collections::HashMap;
 
 #[derive(Clone)]
 pub struct AnalyticsRepo {
-    pool: PgPool
+    pool: PgPool,
 }
 
 impl AnalyticsRepo {
-    pub fn new(
-        pool: &PgPool
-    ) -> Self {
+    pub fn new(pool: &PgPool) -> Self {
         Self { pool: pool.clone() }
     }
     /// The single configurable Actix handler
     pub async fn analytics_handler(
         pool: web::Data<PgPool>,
-        q: web::Query<HashMap<String, String>>,    // we accept arbitrary query params instead of the AnalyticsRequestQuery for fields we dont know of
-        body: Option<web::Json<AnalyticsRequestBody>>,    // optional JSON body
+        q: web::Query<HashMap<String, String>>, // we accept arbitrary query params instead of the AnalyticsRequestQuery for fields we dont know of
+        body: Option<web::Json<AnalyticsRequestBody>>, // optional JSON body
     ) -> impl Responder {
         // Merge params: body (if present) overrides query params
         // We'll construct a small config from either source.
@@ -35,8 +33,15 @@ impl AnalyticsRepo {
         let mut filters: HashMap<String, String> = HashMap::new();
 
         // Copy filters from query params (anything not a reserved param becomes a filter)
-        let reserved = ["metric","window","group_by","aggregate_field","limit","order_by"];
-        for (k,v) in q.iter() {
+        let reserved = [
+            "metric",
+            "window",
+            "group_by",
+            "aggregate_field",
+            "limit",
+            "order_by",
+        ];
+        for (k, v) in q.iter() {
             if !reserved.contains(&k.as_str()) {
                 filters.insert((&k).to_string(), (&v).to_string());
             }
@@ -62,7 +67,7 @@ impl AnalyticsRepo {
                 order_by = b.order_by.take();
             }
             if let Some(body_filters) = &b.filters {
-                for ( k, v ) in body_filters {
+                for (k, v) in body_filters {
                     filters.insert(k.to_string(), v.to_string());
                 }
             }
@@ -138,7 +143,14 @@ impl AnalyticsRepo {
         // allowed filter columns: union of allowed_group_by plus some known columns
         let mut allowed_filters = allowed_cols.to_vec().to_vec(); // allowed group_by
         // add usual JSONB-derived columns we might want to filter in some metrics
-        allowed_filters.extend_from_slice(&["product_id","signup_source","country","payment_method","channel", "supplier_id"]);
+        allowed_filters.extend_from_slice(&[
+            "product_id",
+            "signup_source",
+            "country",
+            "payment_method",
+            "channel",
+            "supplier_id",
+        ]);
 
         for (k, v) in filters.iter() {
             // sanitize: only allow letters, digits, underscore in column names
@@ -148,14 +160,21 @@ impl AnalyticsRepo {
                 return HttpResponse::BadRequest().json(json!({"error":"invalid filter key"}));
             }
             if !allowed_filters.iter().any(|a| *a == key) {
-                return HttpResponse::BadRequest().json(json!({"error": format!("filter not allowed: {}", key)}));
+                return HttpResponse::BadRequest()
+                    .json(json!({"error": format!("filter not allowed: {}", key)}));
             }
 
             // Two cases: column already exists as a top-level column (e.g. payment_method), or a JSONB field in "data->>'...'"
             // We'll try both: prefer direct column equals, else JSONB extraction.
             // Bind parameter used to avoid injection.
             // Use numbered placeholders and QueryBuilder to bind.
-            where_clauses.push(format!("( ({} = ${}) OR ((data->>'{}') = ${}) )", key, bind_values.len()*2+1, key, bind_values.len()*2+2));
+            where_clauses.push(format!(
+                "( ({} = ${}) OR ((data->>'{}') = ${}) )",
+                key,
+                bind_values.len() * 2 + 1,
+                key,
+                bind_values.len() * 2 + 2
+            ));
             // we will push the value twice; QueryBuilder will bind them in order.
             bind_values.push((&v).to_string());
             bind_values.push((&v).to_string());
@@ -186,10 +205,14 @@ impl AnalyticsRepo {
             };
             let mut agg_safe = "";
             if !aggregate_field.is_empty() {
-                agg_safe = if aggregate_field.chars().all(|c| c.is_alphanumeric() || c == '_') {
+                agg_safe = if aggregate_field
+                    .chars()
+                    .all(|c| c.is_alphanumeric() || c == '_')
+                {
                     &aggregate_field
                 } else {
-                    return HttpResponse::BadRequest().json(json!({"error":"invalid aggregate_field"}));
+                    return HttpResponse::BadRequest()
+                        .json(json!({"error":"invalid aggregate_field"}));
                 };
             }
 
@@ -212,13 +235,19 @@ impl AnalyticsRepo {
             // fallback: raw select *
             let limit_clause = match limit {
                 Some(l) => format!("LIMIT {}", l),
-                None => "".to_string()
+                None => "".to_string(),
             };
-            format!("SELECT * FROM {} {} ORDER BY day DESC {}", table, where_clause, limit_clause)
+            format!(
+                "SELECT * FROM {} {} ORDER BY day DESC {}",
+                table, where_clause, limit_clause
+            )
         };
 
         // Wrap inner_select to return JSON rows easily using Postgres json_agg:
-        let final_sql = format!("SELECT COALESCE(json_agg(t), '[]'::json) AS data FROM ( {} ) t", inner_select);
+        let final_sql = format!(
+            "SELECT COALESCE(json_agg(t), '[]'::json) AS data FROM ( {} ) t",
+            inner_select
+        );
 
         // Build QueryBuilder and bind the filter values in order
         // We must reconstruct the query but QueryBuilder doesn't allow us to inject final_sql and then bind easily.
@@ -238,9 +267,8 @@ impl AnalyticsRepo {
                     "result": v
                 }))
             }
-            Err(e) => {
-                HttpResponse::InternalServerError().json(json!({"error": format!("{}", e), "sql": final_sql}))
-            }
+            Err(e) => HttpResponse::InternalServerError()
+                .json(json!({"error": format!("{}", e), "sql": final_sql})),
         }
     }
 }

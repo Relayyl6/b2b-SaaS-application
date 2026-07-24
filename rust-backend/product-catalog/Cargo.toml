@@ -1,25 +1,24 @@
 [package]
 name = "product-catalog"
-version = "0.1.0"
-edition = "2024"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
 
 [dependencies]
-actix-web = "4"
-serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
-sqlx = { version = "0.7", features = ["runtime-tokio-rustls", "postgres", "uuid", "chrono", "macros"] }
-uuid = { version = "1", features = ["v4", "serde"] }
-chrono = { version = "0.4", features = ["serde", "clock"] }
-dotenvy = "0.15"
-env_logger = "0.10"
-log = "0.4"
-tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
-redis = { version = "0.23", features = ["aio", "tokio-comp"] }
-futures = "0.3"
-lapin = { version = "3.7.1", features = ["rustls"] }
-thiserror = "2.0.17"
-tracing = "0.1"
-tokio-rustls = "0.26.4"
-sha1 = "0.10"
-tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
-
+actix-web.workspace = true
+chrono.workspace = true
+dotenvy.workspace = true
+futures-util.workspace = true
+lapin.workspace = true
+platform.workspace = true
+redis.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha1.workspace = true
+sqlx = { workspace = true, features = ["macros"] }
+thiserror.workspace = true
+tokio.workspace = true
+tokio-rustls.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+uuid.workspace = true

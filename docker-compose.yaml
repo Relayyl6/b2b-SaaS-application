@@ -39,6 +39,22 @@ services:
     ports:
       - "3006:3006"
 
+  notifications:
+    build:
+      context: .
+      dockerfile: rust-backend/notifications/Dockerfile
+    environment:
+      DATABASE_URL: postgres://postgres:pussyli%24%25ager@db:5432/b2b
+      REDIS_URL: redis://127.0.0.1:6379
+      SERVICE_PORT: 3009
+      AMQP_ADDR: amqp://guest:guest@rabbitmq:5672/%2f
+    depends_on:
+      - postgres
+      - redis
+      - rabbitmq
+    ports:
+      - "3009:3009"
+
   user-management:
     build:
       context: .
@@ -129,6 +145,7 @@ services:
       - analytics
       - inventory-management
       - user-management
+      - notifications
     ports:
       - "8080:8080"
 

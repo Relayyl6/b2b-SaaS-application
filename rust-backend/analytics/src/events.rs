@@ -1,8 +1,8 @@
 use crate::models::{AnalyticsEvent, Event};
-use thiserror::Error;
-use std::collections::HashMap;
-use uuid::Uuid;
 use chrono::Utc;
+use std::collections::HashMap;
+use thiserror::Error;
+use uuid::Uuid;
 
 #[derive(Debug, Error)]
 pub enum EventError {
@@ -18,9 +18,7 @@ pub enum EventError {
 
 impl AnalyticsEvent {
     /// Get the ID associated with the event_type (order_id, product_id, etc.)
-    pub fn extract_primary_id(
-        &self
-    ) -> Uuid {
+    pub fn extract_primary_id(&self) -> Uuid {
         if self.event_type.starts_with("order.") {
             return self.order_id.unwrap_or_else(Uuid::new_v4);
         }
@@ -42,26 +40,20 @@ impl AnalyticsEvent {
 }
 
 impl Event {
-    pub fn new(
-        event: AnalyticsEvent
-    ) -> Result<Event, EventError> {
+    pub fn new(event: AnalyticsEvent) -> Result<Event, EventError> {
         let id = event.extract_primary_id();
 
-        let data = serde_json::to_value(&event)
-            .map_err(|e| EventError::ConversionError(e.to_string()))?;
+        let data =
+            serde_json::to_value(&event).map_err(|e| EventError::ConversionError(e.to_string()))?;
 
-        Ok(
-            Event {
-                event_type: event.event_type,
-                event_timestamp: Some(event.timestamp.unwrap_or(Utc::now())),
-                data,
-                id: Some(id),
-            }
-        )
+        Ok(Event {
+            event_type: event.event_type,
+            event_timestamp: Some(event.timestamp.unwrap_or(Utc::now())),
+            data,
+            id: Some(id),
+        })
     }
 }
-
-
 
 /// Allowed metrics -> underlying table mapping
 pub async fn metric_table_map() -> HashMap<&'static str, &'static str> {
@@ -77,7 +69,6 @@ pub async fn metric_table_map() -> HashMap<&'static str, &'static str> {
     m.insert("notifications", "analytics.notifications_daily");
     m.insert("top_products_7d", "analytics.top_products_7d");
 }
-
 
 /// Whitelist of allowed group_by columns per metric (prevents injection and invalid columns)
 pub fn allowed_group_by(metric: &str) -> &'static [&'static str] {
@@ -103,7 +94,9 @@ pub fn parse_window_to_interval(window: &str) -> Option<String> {
     let mut chars = window.chars();
     let mut digits = String::new();
     while let Some(c) = chars.next() {
-        if c.is_digit(10) { digits.push(c); } else {
+        if c.is_digit(10) {
+            digits.push(c);
+        } else {
             let rest: String = std::iter::once(c).chain(chars).collect();
             match rest.as_str() {
                 "mo" | "month" | "months" => return Some(format!("{} months", digits)),

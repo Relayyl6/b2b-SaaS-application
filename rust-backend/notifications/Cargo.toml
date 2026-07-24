@@ -1,0 +1,21 @@
+[package]
+name = "notifications"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+actix-web.workspace = true
+chrono.workspace = true
+dotenvy.workspace = true
+futures-util.workspace = true
+platform.workspace = true
+redis.workspace = true
+reqwest.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sqlx = { workspace = true, features = ["macros", "json"] }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time"] }
+tracing.workspace = true
+tracing-subscriber.workspace = true
+uuid.workspace = true

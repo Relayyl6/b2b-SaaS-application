@@ -1,24 +1,24 @@
-mod models;
-mod db;
-mod redis_pub;
 mod auth;
+mod db;
 mod middleware;
+mod models;
+mod redis_pub;
 // mod redis_sub;
 
 mod protected;
 mod unprotected;
 
-
-use dotenvy::dotenv;
-use std::env;
-use actix_web::{web, App, HttpServer};
-use sqlx::PgPool;
 use crate::db::UserRepo;
 use crate::redis_pub::RedisPublisher;
+use actix_web::{App, HttpServer, web};
+use dotenvy::dotenv;
 use redis::Client as RedisClient;
+use sqlx::PgPool;
+use std::env;
 
 use crate::protected::handlers as protected_handlers;
 use crate::unprotected::handlers as unprotected_handlers;
+use platform::{metrics, observability};
 
 use middleware::authmiddleware::AuthMiddleware;
 
@@ -29,15 +29,24 @@ use middleware::authmiddleware::AuthMiddleware;
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
     dotenv().ok();
-    env_logger::init();
+    observability::init_observability("user-management");
+    metrics::init_metrics("user-management");
 
-    let database_url = env::var("DATABASE_URL").expect("Database url must be set in the environment variable");
+    let database_url =
+        env::var("DATABASE_URL").expect("Database url must be set in the environment variable");
     let redis_url = env::var("REDIS_URL").ok();
-    let port = env::var("PORT").unwrap_or_else(|_| "3004".to_string());
+    let port = env::var("SERVICE_PORT")
+        .or_else(|_| env::var("PORT"))
+        .unwrap_or_else(|_| "3004".to_string());
     let jwt_secret = env::var("SECRET").unwrap_or_else(|_| "something".to_string());
 
-    let pool = PgPool::connect(&database_url).await.expect("Failed to connect to postgres database");
-    sqlx::migrate!("./migrations").run(&pool).await.expect("Migrations Failed");
+    let pool = PgPool::connect(&database_url)
+        .await
+        .expect("Failed to connect to postgres database");
+    sqlx::migrate!("./migrations")
+        .run(&pool)
+        .await
+        .expect("Migrations Failed");
 
     let repo = web::Data::new(UserRepo::new(pool.clone()));
 
@@ -60,7 +69,7 @@ async fn main() -> std::io::Result<()> {
 
     let redis_client = web::Data::new(RedisClient::open(redis_url.unwrap()).expect("redis client"));
 
-    println!("User management Service running on localhost:{}", port);
+    tracing::info!("User Management Service listening on 0.0.0.0:{}", port);
 
     HttpServer::new(move || {
         App::new()
@@ -68,16 +77,39 @@ async fn main() -> std::io::Result<()> {
             .app_data(redis_pub.clone())
             .app_data(redis_client.clone())
             .service(
-                web::scope("/protected")       // all /protected/* routes
-                    .wrap(middleware.clone())  // middleware only applies here
-                    .route("/update/{id}", web::put().to(protected_handlers::update_user_handler))
-                    .route("/delete/{id}", web::delete().to(protected_handlers::delete_user_handler))
+                web::scope("/protected") // all /protected/* routes
+                    .wrap(middleware.clone()) // middleware only applies here
+                    .route(
+                        "/update/{id}",
+                        web::put().to(protected_handlers::update_user_handler),
+                    )
+                    .route(
+                        "/delete/{id}",
+                        web::delete().to(protected_handlers::delete_user_handler),
+                    ),
             )
             // other unprotected routes outside the scope
-            .route("/signup", web::post().to(unprotected_handlers::sign_up_user))
-            .route("/signin", web::post().to(unprotected_handlers::sign_in_user))
-            .route("/signout", web::post().to(unprotected_handlers::sign_out_user))
-            .route("/get_user/{id}", web::get().to(unprotected_handlers::get_user))
+            .route(
+                "/signup",
+                web::post().to(unprotected_handlers::sign_up_user),
+            )
+            .route(
+                "/signin",
+                web::post().to(unprotected_handlers::sign_in_user),
+            )
+            .route(
+                "/signout",
+                web::post().to(unprotected_handlers::sign_out_user),
+            )
+            .route(
+                "/get_user/{id}",
+                web::get().to(unprotected_handlers::get_user),
+            )
+            .route(
+                "/auth/validate",
+                web::get().to(unprotected_handlers::validate_token),
+            )
+            .route("/metrics", web::get().to(metrics::metrics_handler))
     })
     .bind(format!("0.0.0.0:{}", port))?
     .run()

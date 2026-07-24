@@ -51,6 +51,7 @@ pub enum OrderStatus {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, Default)]
+#[serde(default)]
 pub struct OrderEvent {
     pub event_type: String,
     pub product_id: Uuid,

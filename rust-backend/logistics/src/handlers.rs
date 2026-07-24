@@ -120,3 +120,42 @@ pub async fn update_status(
         }
     }
 }
+
+/// Cancels an active shipment by order id and publishes logistics.shipment_cancelled.
+pub async fn cancel_shipment_by_order(
+    repo: web::Data<LogisticsRepo>,
+    redis_pub: web::Data<RedisPublisher>,
+    rabbit_pub: web::Data<RabbitPublisher>,
+    path: web::Path<Uuid>,
+) -> impl Responder {
+    match repo.cancel_by_order_id(path.into_inner()).await {
+        Ok(shipment) => {
+            let event = LogisticsEvent {
+                event_type: "logistics.shipment_cancelled".into(),
+                shipment_id: shipment.id,
+                order_id: shipment.order_id,
+                user_id: shipment.user_id,
+                supplier_id: shipment.supplier_id,
+                product_id: shipment.product_id,
+                status: shipment.status.clone(),
+                tracking_number: shipment.tracking_number.clone(),
+                timestamp: Utc::now(),
+            };
+
+            redis_pub.publish_async("logistics.shipment_cancelled", event.clone());
+            rabbit_pub.publish_async(event.clone());
+
+            HttpResponse::Ok().json(shipment)
+        }
+        Err(sqlx::Error::RowNotFound) => {
+            HttpResponse::NotFound().body("active shipment for order not found")
+        }
+        Err(e) => {
+            HttpResponse::InternalServerError().body(format!("failed to cancel shipment: {e}"))
+        }
+    }
+}
+
+pub async fn health() -> impl Responder {
+    HttpResponse::Ok().json(serde_json::json!({ "status": "ok", "service": "logistics" }))
+}

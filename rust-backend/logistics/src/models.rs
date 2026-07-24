@@ -80,6 +80,7 @@ pub struct LogisticsEvent {
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct IncomingOrderEvent {
+    #[allow(dead_code)] // deserialized from stream; reserved for future event routing
     pub event_type: String,
     pub order_id: Option<Uuid>,
     pub user_id: Option<Uuid>,

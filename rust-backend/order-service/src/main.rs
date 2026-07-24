@@ -14,6 +14,7 @@ use crate::redis_pub::RedisPublisher;
 use redis::Client as RedisClient;
 
 use dotenvy::dotenv;
+use platform::{metrics, observability};
 use std::env;
 
 use crate::redis_sub::listen_to_redis_events;
@@ -21,13 +22,13 @@ use crate::redis_sub::listen_to_redis_events;
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
     dotenv().ok();
-    tracing_subscriber::fmt::init();
+    observability::init_observability("order-service");
+    metrics::init_metrics("order-service");
 
     let redis_url = env::var("REDIS_URL").ok();
-    let port = env::var("PORT").unwrap_or_else(|_| "3005".to_string());
-
-    let host = env::var("HOST").unwrap_or_else(|_| "localhost".to_string());
-    let addr = format!("{}:{}", host, port);
+    let port = env::var("SERVICE_PORT")
+        .or_else(|_| env::var("PORT"))
+        .unwrap_or_else(|_| "3005".to_string());
 
     let pool = db::get_db_pool().await;
 
@@ -44,7 +45,7 @@ async fn main() -> std::io::Result<()> {
         )
         .expect("redis client"),
     );
-    
+
     let redis_pub = match &redis_url {
         Some(url) => match RedisPublisher::new(url).await {
             Ok(pubw) => web::Data::new(pubw),
@@ -69,13 +70,14 @@ async fn main() -> std::io::Result<()> {
         let _ = listen_to_redis_events(pool_clone).await;
     });
 
-    println!("🚀 Order Service running at http://{}", addr);
+    tracing::info!("Order Service listening on 0.0.0.0:{}", port);
 
     HttpServer::new(move || {
         App::new()
             .app_data(web::Data::new(pool.clone()))
             .app_data(redis_pub.clone())
             .app_data(redis_client.clone())
+            .route("/metrics", web::get().to(metrics::metrics_handler))
             .service(routes::create_order)
             .service(routes::get_order)
             .service(routes::update_status)

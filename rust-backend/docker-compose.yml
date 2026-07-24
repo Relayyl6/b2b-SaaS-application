@@ -1,0 +1,235 @@
+services:
+  api-gateway:
+    image: nginx:1.27-alpine
+    ports:
+      - "8080:80"
+    volumes:
+      - ./infra/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      - user-management
+      - product-catalog
+      - order-service
+      - inventory-management
+      - logistics
+      - notifications
+      - payments
+      - supplier-management
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_MULTIPLE_DATABASES: ${POSTGRES_MULTIPLE_DATABASES:-users,products,orders,inventory,logistics,notifications,payments,suppliers}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./infra/postgres/init-multiple-databases.sh:/docker-entrypoint-initdb.d/init-multiple-databases.sh:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  timescaledb:
+    image: timescale/timescaledb:latest-pg15
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: analytics_service
+    ports:
+      - "5433:5432"
+    volumes:
+      - timescale-data:/var/lib/postgresql/data
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+
+  rabbitmq:
+    image: rabbitmq:3-management-alpine
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+
+  user-management:
+    build:
+      context: .
+      dockerfile: Dockerfile.service
+      args:
+        PACKAGE: user-management
+        BINARY: user-management
+    environment:
+      DATABASE_URL: ${USER_DATABASE_URL:-postgres://postgres:postgres@postgres:5432/users}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379}
+      SECRET: ${SECRET:-change-me}
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
+      PORT: 3004
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+
+  product-catalog:
+    build:
+      context: .
+      dockerfile: Dockerfile.service
+      args:
+        PACKAGE: product-catalog
+        BINARY: product-catalog
+    environment:
+      DATABASE_URL: ${PRODUCT_DATABASE_URL:-postgres://postgres:postgres@postgres:5432/products}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379}
+      RABBITMQ_URL: ${RABBITMQ_URL:-amqp://guest:guest@rabbitmq:5672/%2f}
+      SERVICE_PORT: 3003
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+      rabbitmq:
+        condition: service_started
+
+  order-service:
+    build:
+      context: .
+      dockerfile: Dockerfile.service
+      args:
+        PACKAGE: order-service
+        BINARY: order-service
+    environment:
+      DATABASE_URL: ${ORDER_DATABASE_URL:-postgres://postgres:postgres@postgres:5432/orders}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379}
+      PORT: 3005
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+
+  inventory-management:
+    build:
+      context: .
+      dockerfile: Dockerfile.service
+      args:
+        PACKAGE: inventory-service
+        BINARY: inventory-service
+    environment:
+      DATABASE_URL: ${INVENTORY_DATABASE_URL:-postgres://postgres:postgres@postgres:5432/inventory}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379}
+      SERVICE_PORT: 3006
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+
+  logistics:
+    build:
+      context: .
+      dockerfile: Dockerfile.service
+      args:
+        PACKAGE: logistics
+        BINARY: logistics
+    environment:
+      DATABASE_URL: ${LOGISTICS_DATABASE_URL:-postgres://postgres:postgres@postgres:5432/logistics}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379}
+      RABBITMQ_URL: ${RABBITMQ_URL:-amqp://guest:guest@rabbitmq:5672/%2f}
+      SERVICE_PORT: 3008
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+      rabbitmq:
+        condition: service_started
+
+  notifications:
+    build:
+      context: .
+      dockerfile: Dockerfile.service
+      args:
+        PACKAGE: notifications
+        BINARY: notifications
+    environment:
+      DATABASE_URL: ${NOTIFICATIONS_DATABASE_URL:-postgres://postgres:postgres@postgres:5432/notifications}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379}
+      SERVICE_PORT: 3009
+      NOTIFICATION_DRY_RUN: ${NOTIFICATION_DRY_RUN:-true}
+      EMAIL_WEBHOOK_URL: ${EMAIL_WEBHOOK_URL:-}
+      SMS_WEBHOOK_URL: ${SMS_WEBHOOK_URL:-}
+      EXPO_PUSH_URL: ${EXPO_PUSH_URL:-https://exp.host/--/api/v2/push/send}
+      EXPO_ACCESS_TOKEN: ${EXPO_ACCESS_TOKEN:-}
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+
+  payments:
+    build:
+      context: .
+      dockerfile: Dockerfile.service
+      args:
+        PACKAGE: payments
+        BINARY: payments
+    environment:
+      DATABASE_URL: ${PAYMENTS_DATABASE_URL:-postgres://postgres:postgres@postgres:5432/payments}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379}
+      SERVICE_PORT: 3010
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+
+  supplier-management:
+    build:
+      context: .
+      dockerfile: Dockerfile.service
+      args:
+        PACKAGE: supplier-management
+        BINARY: supplier-management
+    environment:
+      DATABASE_URL: ${SUPPLIERS_DATABASE_URL:-postgres://postgres:postgres@postgres:5432/suppliers}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379}
+      SERVICE_PORT: 3011
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+
+  analytics:
+    build:
+      context: .
+      dockerfile: Dockerfile.service
+      args:
+        PACKAGE: analytics
+        BINARY: analytics
+    environment:
+      DATABASE_URL: ${ANALYTICS_DATABASE_URL:-postgres://postgres:postgres@timescaledb:5432/analytics_service}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379}
+      RABBITMQ_URL: ${RABBITMQ_URL:-amqp://guest:guest@rabbitmq:5672/%2f}
+      SERVICE_PORT: 3007
+    depends_on:
+      timescaledb:
+        condition: service_started
+      redis:
+        condition: service_started
+      rabbitmq:
+        condition: service_started
+
+volumes:
+  postgres-data:
+  timescale-data:

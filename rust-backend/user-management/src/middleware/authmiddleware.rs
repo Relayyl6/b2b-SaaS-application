@@ -1,17 +1,17 @@
-use actix_web::{
-    dev::{Service, ServiceRequest, ServiceResponse, Transform},
-    Error, HttpMessage
-};
 use actix_web::body::EitherBody;
-use futures::future::LocalBoxFuture;
-use jsonwebtoken::{decode, DecodingKey, Validation, Algorithm};
+use actix_web::{
+    Error, HttpMessage,
+    dev::{Service, ServiceRequest, ServiceResponse, Transform},
+};
+use futures_util::future::LocalBoxFuture;
+use jsonwebtoken::{Algorithm, DecodingKey, Validation, decode};
 use sqlx::PgPool;
 use std::{
-    future::{ready, Ready},
+    future::{Ready, ready},
     rc::Rc,
 };
 
-use crate::models::{Users, Claims};
+use crate::models::{Claims, Users};
 
 #[derive(Clone)]
 pub struct AuthMiddleware {
@@ -88,25 +88,22 @@ where
             )
             .map_err(|_| actix_web::error::ErrorUnauthorized("Invalid or expired token"))?;
 
-            let revoked = sqlx::query_scalar::<_, i64>(
-                "SELECT 1 FROM revoked_tokens WHERE token = $1"
-            )
-            .bind(&token)
-            .fetch_optional(&pool)
-            .await
-            .map_err(|_| actix_web::error::ErrorInternalServerError("DB error"))?;
+            let revoked =
+                sqlx::query_scalar::<_, i64>("SELECT 1 FROM revoked_tokens WHERE token = $1")
+                    .bind(&token)
+                    .fetch_optional(&pool)
+                    .await
+                    .map_err(|_| actix_web::error::ErrorInternalServerError("DB error"))?;
 
             if revoked.is_some() {
                 return Err(actix_web::error::ErrorUnauthorized("Token revoked"));
             }
 
-            let user = sqlx::query_as::<_, Users>(
-                "SELECT * FROM users WHERE id = $1"
-            )
-            .bind(decoded.claims.sub)
-            .fetch_one(&pool)
-            .await
-            .map_err(|_| actix_web::error::ErrorUnauthorized("User not found"))?;
+            let user = sqlx::query_as::<_, Users>("SELECT * FROM users WHERE id = $1")
+                .bind(decoded.claims.sub)
+                .fetch_one(&pool)
+                .await
+                .map_err(|_| actix_web::error::ErrorUnauthorized("User not found"))?;
 
             req.extensions_mut().insert(user);
 

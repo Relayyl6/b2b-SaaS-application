@@ -1,26 +1,29 @@
+
 // src/main.rs
-mod models;
 mod db;
-mod redis_pub;
 mod handlers;
+mod models;
+mod redis_pub;
 mod redis_sub;
 mod worker;
 
-use actix_web::{web, App, HttpServer};
-use dotenvy::dotenv;
-use std::env;
-use tokio::spawn;
-use sqlx::postgres::PgPoolOptions;
-use redis::Client;
 use crate::redis_pub::RedisPublisher;
 use crate::redis_sub::listen_to_redis_events;
+use actix_web::{web, App, HttpServer};
+use dotenvy::dotenv;
+use platform::{metrics, observability};
+use redis::Client;
+use sqlx::postgres::PgPoolOptions;
+use std::env;
+use tokio::spawn;
 
-use crate::worker::reservation_worker as reservation_worker;
+use crate::worker::reservation_worker;
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
     dotenv().ok();
-    env_logger::init();
+    observability::init_observability("inventory-management");
+    metrics::init_metrics("inventory-management");
 
     let db_url = env::var("DATABASE_URL").expect("DATABASE_URL not set");
     let redis_url = env::var("REDIS_URL");
@@ -49,21 +52,22 @@ async fn main() -> std::io::Result<()> {
                 eprintln!("⚠️ REDIS_URL not set — using noop client.");
                 Ok(Client::open("redis://localhost:6379").unwrap())
             })
-            .unwrap()
+            .unwrap(),
     );
 
     let redis_pub = match redis_url.clone() {
-        Ok(ref url) => {
-            match RedisPublisher::new(url).await {
-                Ok(pubw) => web::Data::new(pubw),
-                Err(e) => {
-                    eprintln!("⚠️ Failed to connect to Redis: {:?} ⚠️ Continuing without Redis publishing capabilities...", e);
-                    web::Data::new(RedisPublisher::new_noop())
-                }
+        Ok(ref url) => match RedisPublisher::new(url).await {
+            Ok(pubw) => web::Data::new(pubw),
+            Err(e) => {
+                eprintln!("⚠️ Failed to connect to Redis: {:?} ⚠️ Continuing without Redis publishing capabilities...", e);
+                web::Data::new(RedisPublisher::new_noop())
             }
         },
         Err(e) => {
-            eprintln!("⚠️ No REDIS_URL configured — using no-op publisher: {:?}", e);
+            eprintln!(
+                "⚠️ No REDIS_URL configured — using no-op publisher: {:?}",
+                e
+            );
             web::Data::new(RedisPublisher::new_noop())
         }
     };
@@ -76,27 +80,30 @@ async fn main() -> std::io::Result<()> {
     let redis_pub_clone = redis_pub.clone();
 
     spawn(async move {
-        let _ = listen_to_redis_events(
-            pool_clone,
-            repo_clone,
-            redis_pub_clone
-        ).await;
+        let _ = listen_to_redis_events(pool_clone, repo_clone, redis_pub_clone).await;
     });
 
-    println!("Inventory Service running on http://localhost:{}", port);
+    tracing::info!("Inventory Service listening on 0.0.0.0:{}", port);
 
     HttpServer::new(move || {
         App::new()
             .app_data(repo.clone())
             .app_data(redis_pub.clone())
             .app_data(redis_client.clone())
+            .route("/metrics", web::get().to(metrics::metrics_handler))
             .route("/inventory", web::post().to(handlers::create_inventory))
             .route(
                 "/inventory/{supplier_id}/{product_id}",
                 web::get().to(handlers::get_inventory_item),
             )
-            .route("/inventory/{supplier_id}", web::get().to(handlers::get_inventory))
-            .route("/inventory/{supplier_id}/update", web::post().to(handlers::update_stock))
+            .route(
+                "/inventory/{supplier_id}",
+                web::get().to(handlers::get_inventory),
+            )
+            .route(
+                "/inventory/{supplier_id}/update",
+                web::post().to(handlers::update_stock),
+            )
             .route(
                 "/inventory/{supplier_id}/{product_id}",
                 web::delete().to(handlers::delete_product),

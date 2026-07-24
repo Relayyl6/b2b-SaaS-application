@@ -1,0 +1,74 @@
+use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
+use sqlx::FromRow;
+use uuid::Uuid;
+
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::Type, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+#[sqlx(type_name = "payment_status", rename_all = "snake_case")]
+pub enum PaymentStatus {
+    RequiresPaymentMethod,
+    Processing,
+    Succeeded,
+    Failed,
+    Cancelled,
+    Refunded,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+pub struct PaymentIntent {
+    pub id: Uuid,
+    pub idempotency_key: String,
+    pub order_id: Uuid,
+    pub user_id: Uuid,
+    pub supplier_id: Uuid,
+    pub product_id: Uuid,
+    pub quantity: i32,
+    pub amount: f64,
+    pub currency: String,
+    pub provider: String,
+    pub provider_reference: Option<String>,
+    pub status: PaymentStatus,
+    pub metadata: Value,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct CreatePaymentIntentRequest {
+    pub idempotency_key: String,
+    pub order_id: Uuid,
+    pub user_id: Uuid,
+    pub supplier_id: Uuid,
+    pub product_id: Uuid,
+    pub quantity: i32,
+    pub amount: f64,
+    pub currency: Option<String>,
+    pub provider: Option<String>,
+    pub metadata: Option<Value>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct PaymentWebhook {
+    pub provider_reference: Option<String>,
+    pub idempotency_key: Option<String>,
+    pub status: PaymentStatus,
+    pub metadata: Option<Value>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct PaymentEvent {
+    pub event_type: String,
+    pub payment_id: Uuid,
+    pub order_id: Uuid,
+    pub user_id: Uuid,
+    pub supplier_id: Uuid,
+    pub product_id: Uuid,
+    pub quantity: i32,
+    pub amount: f64,
+    pub currency: String,
+    pub provider: String,
+    pub provider_reference: Option<String>,
+    pub timestamp: DateTime<Utc>,
+}

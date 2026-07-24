@@ -1,8 +1,7 @@
-use serde::{Serialize, Deserialize};
-use sqlx::FromRow;
 use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
+use sqlx::FromRow;
 use uuid::Uuid;
-use sqlx::Type;
 
 #[derive(Debug, Serialize, Deserialize, FromRow)]
 pub struct Users {
@@ -16,7 +15,6 @@ pub struct Users {
     pub updated_at: DateTime<Utc>,
 }
 
-
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::Type, PartialEq, Eq)]
 #[sqlx(type_name = "user_role", rename_all = "lowercase")]
 pub enum UserRole {
@@ -26,11 +24,11 @@ pub enum UserRole {
 }
 
 #[derive(Serialize, Deserialize, Debug)]
-pub struct SignUpRequest {  
+pub struct SignUpRequest {
     pub email: String,
     pub password: String,
     pub full_name: String,
-    pub role: Option<UserRole>
+    pub role: Option<UserRole>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -41,7 +39,7 @@ pub struct SignInRequest {
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct SignOutRequest {
-    pub token: String
+    pub token: String,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -54,7 +52,7 @@ pub struct AuthResponse {
 pub struct Claims {
     pub sub: Uuid,
     pub role: UserRole,
-    pub exp: usize
+    pub exp: usize,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -63,13 +61,10 @@ pub struct UpdateUserRequest {
     pub email: Option<String>,
     pub password: Option<String>,
     pub role: Option<UserRole>,
-    pub is_active: Option<bool>
+    pub is_active: Option<bool>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct DeleteUserRequest {
     pub user_id: String,
 }
-
-
-

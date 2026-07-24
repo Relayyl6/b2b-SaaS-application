@@ -1,10 +1,10 @@
-use actix_web::{web, HttpResponse, Responder};
-use uuid::Uuid;
-use crate::models::{UpdateStockRequest, StockUpdateEvent, CreateInventoryRequest};
 use crate::db::InventoryRepo;
+use crate::models::{CreateInventoryRequest, StockUpdateEvent, UpdateStockRequest};
 use crate::redis_pub::RedisPublisher;
+use actix_web::{web, HttpResponse, Responder};
 use redis::AsyncCommands;
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
+use uuid::Uuid;
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct ProductDeletedEvent {
@@ -12,7 +12,6 @@ pub struct ProductDeletedEvent {
     pub supplier_id: Uuid,
     pub deleted: bool,
 }
-
 
 pub async fn get_inventory(
     repo: web::Data<InventoryRepo>,
@@ -59,7 +58,6 @@ pub async fn get_inventory_item(
         }
     }
 }
-
 
 pub async fn update_stock(
     repo: web::Data<InventoryRepo>,
@@ -111,13 +109,10 @@ pub async fn update_stock(
         Err(err) => {
             eprintln!("Database error while updating stock: {:?}", err);
             match err {
-                sqlx::Error::RowNotFound => {
-                    HttpResponse::NotFound().body("No inventory item found for this supplier and product ID.")
-                }
-                sqlx::Error::Database(db_err) => {
-                    HttpResponse::InternalServerError()
-                        .body(format!("Database constraint error: {}", db_err))
-                }
+                sqlx::Error::RowNotFound => HttpResponse::NotFound()
+                    .body("No inventory item found for this supplier and product ID."),
+                sqlx::Error::Database(db_err) => HttpResponse::InternalServerError()
+                    .body(format!("Database constraint error: {}", db_err)),
                 _ => HttpResponse::InternalServerError().body("Unexpected database error."),
             }
         }
@@ -138,10 +133,13 @@ pub async fn delete_product(
             let event = ProductDeletedEvent {
                 product_id,
                 supplier_id,
-                deleted: true
+                deleted: true,
             };
 
-            redis_pub.publish::<ProductDeletedEvent>("inventory.deleted", &event).await.unwrap();
+            redis_pub
+                .publish::<ProductDeletedEvent>("inventory.deleted", &event)
+                .await
+                .unwrap();
 
             if let Ok(mut conn) = redis_client.get_multiplexed_async_connection().await {
                 let cache_key = format!("inventory:supplier:{}", supplier_id);

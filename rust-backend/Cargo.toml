@@ -1,0 +1,90 @@
+[workspace]
+resolver = "2"
+members = [
+    "analytics",
+    "inventory-management",
+    "logistics",
+    "notifications",
+    "order-service",
+    "payments",
+    "platform",
+    "product-catalog",
+    "supplier-management",
+    "user-management",
+]
+
+[workspace.package]
+edition = "2021"
+license = "UNLICENSED"
+version = "0.1.0"
+
+# ---------------------------------------------------------------------------
+# Shared dependency versions — all workspace members inherit from here.
+# Use `dep.workspace = true` in individual Cargo.toml files.
+# ---------------------------------------------------------------------------
+[workspace.dependencies]
+# HTTP framework
+actix-web = "4"
+actix-rt = "2"
+
+# Async runtime
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+
+# Database
+sqlx = { version = "0.7", features = ["runtime-tokio-rustls", "postgres", "uuid", "chrono"] }
+chrono = { version = "0.4", features = ["serde", "clock"] }
+
+# Serialisation
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# IDs
+uuid = { version = "1", features = ["v4", "serde"] }
+
+# Environment
+dotenvy = "0.15"
+
+# Redis (unified on latest version used in workspace)
+redis = { version = "0.25", features = ["aio", "tokio-comp"] }
+
+# Message queue (RabbitMQ)
+lapin = { version = "3.7.1", features = ["rustls"] }
+
+# Logging / tracing
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
+
+# HTTP client
+reqwest = { version = "0.12", features = ["json"] }
+
+# Error handling
+thiserror = "2"
+
+# Async utilities
+futures-util = "0.3"
+
+# Observability (OpenTelemetry + Prometheus) — used directly only in platform
+opentelemetry = "0.27"
+opentelemetry-otlp = { version = "0.27", features = ["grpc-tonic"] }
+opentelemetry_sdk = { version = "0.27", features = ["rt-tokio"] }
+prometheus = "0.13"
+tracing-opentelemetry = "0.28"
+
+# Auth (user-management only)
+argon2 = "0.5.3"
+jsonwebtoken = { version = "10.2.0", features = ["rust_crypto"] }
+
+# Misc (service-specific but versioned here for consistency)
+sha1 = "0.10"
+tokio-rustls = "0.26"
+futures = "0.3"
+
+# Internal crates
+platform = { path = "platform" }
+
+# ---------------------------------------------------------------------------
+[profile.release]
+lto = "thin"
+codegen-units = 1
+opt-level = 3
+strip = "symbols"

@@ -1,0 +1,125 @@
+name: Rust Backend CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+      - master
+
+jobs:
+  rust:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+      rabbitmq:
+        image: rabbitmq:3-alpine
+        ports:
+          - 5672:5672
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install native build dependencies
+        run: sudo apt-get update && sudo apt-get install -y cmake nasm pkg-config
+
+      - name: Create all service databases
+        env:
+          PGPASSWORD: postgres
+        run: |
+          psql -h localhost -U postgres -c "CREATE DATABASE analytics_service;"
+          psql -h localhost -U postgres -c "CREATE DATABASE inventory;"
+          psql -h localhost -U postgres -c "CREATE DATABASE logistics;"
+          psql -h localhost -U postgres -c "CREATE DATABASE notifications;"
+          psql -h localhost -U postgres -c "CREATE DATABASE orders;"
+          psql -h localhost -U postgres -c "CREATE DATABASE payments;"
+          psql -h localhost -U postgres -c "CREATE DATABASE products;"
+          psql -h localhost -U postgres -c "CREATE DATABASE suppliers;"
+          psql -h localhost -U postgres -c "CREATE DATABASE users;"
+
+      - name: Format
+        run: cargo fmt --all -- --check
+
+      - name: Clippy — analytics
+        env:
+          DATABASE_URL: postgres://postgres:postgres@localhost:5432/analytics_service
+          REDIS_URL: redis://localhost:6379
+        run: cargo clippy -p analytics --all-targets -- -D warnings
+
+      - name: Clippy — inventory-management
+        env:
+          DATABASE_URL: postgres://postgres:postgres@localhost:5432/inventory
+          REDIS_URL: redis://localhost:6379
+        run: cargo clippy -p inventory-service --all-targets -- -D warnings
+
+      - name: Clippy — logistics
+        env:
+          DATABASE_URL: postgres://postgres:postgres@localhost:5432/logistics
+          REDIS_URL: redis://localhost:6379
+        run: cargo clippy -p logistics --all-targets -- -D warnings
+
+      - name: Clippy — notifications
+        env:
+          DATABASE_URL: postgres://postgres:postgres@localhost:5432/notifications
+          REDIS_URL: redis://localhost:6379
+        run: cargo clippy -p notifications --all-targets -- -D warnings
+
+      - name: Clippy — order-service
+        env:
+          DATABASE_URL: postgres://postgres:postgres@localhost:5432/orders
+          REDIS_URL: redis://localhost:6379
+        run: cargo clippy -p order-service --all-targets -- -D warnings
+
+      - name: Clippy — payments
+        env:
+          DATABASE_URL: postgres://postgres:postgres@localhost:5432/payments
+          REDIS_URL: redis://localhost:6379
+        run: cargo clippy -p payments --all-targets -- -D warnings
+
+      - name: Clippy — platform
+        run: cargo clippy -p platform --all-targets -- -D warnings
+
+      - name: Clippy — product-catalog
+        env:
+          DATABASE_URL: postgres://postgres:postgres@localhost:5432/products
+          REDIS_URL: redis://localhost:6379
+        run: cargo clippy -p product-catalog --all-targets -- -D warnings
+
+      - name: Clippy — supplier-management
+        env:
+          DATABASE_URL: postgres://postgres:postgres@localhost:5432/suppliers
+          REDIS_URL: redis://localhost:6379
+        run: cargo clippy -p supplier-management --all-targets -- -D warnings
+
+      - name: Clippy — user-management
+        env:
+          DATABASE_URL: postgres://postgres:postgres@localhost:5432/users
+          REDIS_URL: redis://localhost:6379
+        run: cargo clippy -p user-management --all-targets -- -D warnings
+
+      - name: Test
+        env:
+          DATABASE_URL: postgres://postgres:postgres@localhost:5432/inventory
+          REDIS_URL: redis://localhost:6379
+        run: cargo test --workspace

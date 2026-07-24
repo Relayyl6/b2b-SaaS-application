@@ -1,7 +1,7 @@
 // use actix_web::{web, HttpResponse, Responder, HttpRequest};
+use crate::auth::{create_jwt, hash_password, user_exists, verify_password};
+use crate::models::{SignInRequest, SignUpRequest, UpdateUserRequest, UserRole, Users};
 use sqlx::PgPool;
-use crate::models::{Users, SignUpRequest, SignInRequest, UpdateUserRequest, UserRole};
-use crate::auth::{hash_password, verify_password, create_jwt, user_exists};
 use std::env;
 use uuid::Uuid;
 
@@ -14,10 +14,7 @@ impl UserRepo {
         Self { pool }
     }
 
-    pub async fn sign_up(
-        &self,
-        req: &SignUpRequest
-    ) -> Result<(Users, String), sqlx::Error> {
+    pub async fn sign_up(&self, req: &SignUpRequest) -> Result<(Users, String), sqlx::Error> {
         let role = req.role.clone().unwrap_or(UserRole::User);
         let email = &req.email;
         let full_name = &req.full_name;
@@ -35,7 +32,7 @@ impl UserRepo {
                 INSERT INTO users (email, password, full_name, role)
                 VALUES ($1, $2, $3, $4)
                 RETURNING id, email, password, full_name, role, is_active, created_at, updated_at
-            "#
+            "#,
         )
         .bind(email)
         .bind(&password_hashed)
@@ -44,7 +41,7 @@ impl UserRepo {
         .fetch_one(&self.pool)
         .await?;
 
-         let token = create_jwt(user.id, &user.role, &secret)
+        let token = create_jwt(user.id, &user.role, &secret)
             .map_err(|_| sqlx::Error::Protocol("Failed to create JWT".into()))?;
 
         Ok((user, token))
@@ -55,13 +52,12 @@ impl UserRepo {
         let password: &String = &req.password;
         let secret = env::var("SECRET").unwrap_or_else(|_| "obiisaboy".to_string());
 
-
         let user = sqlx::query_as::<_, Users>(
             r#"
                 SELECT *
                 FROM users
                 WHERE email = $1
-            "#
+            "#,
         )
         .bind(email)
         .fetch_one(&self.pool)
@@ -81,31 +77,36 @@ impl UserRepo {
         Ok((user, token))
     }
 
-    pub async fn sign_out(
-        &self,
-        token: &str
-    ) -> Result<(), sqlx::Error> {
-        sqlx::query(
-            "INSERT INTO revoked_tokens (token) VALUES ($1)"
-        )
-        .bind(token)
-        .execute(&self.pool)
-        .await?;
+    pub async fn sign_out(&self, token: &str) -> Result<(), sqlx::Error> {
+        sqlx::query("INSERT INTO revoked_tokens (token) VALUES ($1)")
+            .bind(token)
+            .execute(&self.pool)
+            .await?;
 
         Ok(())
+    }
+
+    pub async fn is_token_revoked(&self, token: &str) -> Result<bool, sqlx::Error> {
+        let revoked =
+            sqlx::query_scalar::<_, i64>("SELECT 1 FROM revoked_tokens WHERE token = $1 LIMIT 1")
+                .bind(token)
+                .fetch_optional(&self.pool)
+                .await?;
+
+        Ok(revoked.is_some())
     }
 
     pub async fn update_user(
         &self,
         user_id: Uuid,
-        req: &UpdateUserRequest
+        req: &UpdateUserRequest,
     ) -> Result<Users, sqlx::Error> {
         let new_email = req.email.as_ref();
         let new_full_name = req.full_name.as_ref();
         let new_password = req.password.as_ref();
         let new_role = req.role.as_ref();
         let new_is_active = req.is_active;
-        
+
         sqlx::query_as::<_, Users>(
             r#"
             UPDATE users
@@ -118,7 +119,7 @@ impl UserRepo {
                 updated_at = NOW()
             WHERE id = $6
             RETURNING id, email, password, full_name, role, is_active, created_at, updated_at
-            "#
+            "#,
         )
         .bind(new_email)
         .bind(new_full_name)
@@ -129,30 +130,22 @@ impl UserRepo {
         .fetch_one(&self.pool)
         .await
     }
-    
-    pub async fn delete_user(
-        &self,
-        user_id: Uuid,
-    ) -> Result<(), sqlx::Error> {
-        sqlx::query(
-            "DELETE FROM users WHERE id = $1"
-        )
-        .bind(user_id)
-        .execute(&self.pool)
-        .await?;
+
+    pub async fn delete_user(&self, user_id: Uuid) -> Result<(), sqlx::Error> {
+        sqlx::query("DELETE FROM users WHERE id = $1")
+            .bind(user_id)
+            .execute(&self.pool)
+            .await?;
         Ok(())
     }
 
-    pub async fn get_user_details(
-        &self,
-        user_id: Uuid,
-    ) -> Result<Users, sqlx::Error> {
+    pub async fn get_user_details(&self, user_id: Uuid) -> Result<Users, sqlx::Error> {
         let user = sqlx::query_as::<_, Users>(
             r#"
             SELECT *
             FROM users
             WHERE id = $1
-            "#
+            "#,
         )
         .bind(user_id)
         .fetch_one(&self.pool)
@@ -161,5 +154,3 @@ impl UserRepo {
         Ok(user)
     }
 }
-
-

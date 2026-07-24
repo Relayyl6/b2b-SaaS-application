@@ -7,6 +7,7 @@ mod redis_sub;
 
 use actix_web::{web, App, HttpServer};
 use dotenvy::dotenv;
+use platform::{metrics, observability};
 use redis::Client;
 use sqlx::postgres::PgPoolOptions;
 use std::env;
@@ -16,13 +17,11 @@ use crate::publisher::RedisPublisher;
 use crate::rabbit_pub::RabbitPublisher;
 use crate::redis_sub::listen_to_redis_events;
 
-use crate::publisher::RedisPublisher;
-use crate::redis_sub::listen_to_redis_events;
-
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
     dotenv().ok();
-    tracing_subscriber::fmt::init();
+    observability::init_observability("logistics");
+    metrics::init_metrics("logistics");
 
     let db_url = env::var("DATABASE_URL").expect("DATABASE_URL not set");
     let redis_url = env::var("REDIS_URL");
@@ -83,6 +82,8 @@ async fn main() -> std::io::Result<()> {
             .app_data(redis_pub.clone())
             .app_data(rabbit_pub.clone())
             .app_data(redis_client.clone())
+            .route("/health", web::get().to(handlers::health))
+            .route("/metrics", web::get().to(metrics::metrics_handler))
             .route("/shipments", web::post().to(handlers::create_shipment))
             .route(
                 "/shipments/{shipment_id}",
@@ -95,6 +96,10 @@ async fn main() -> std::io::Result<()> {
             .route(
                 "/shipments/{shipment_id}/status",
                 web::put().to(handlers::update_status),
+            )
+            .route(
+                "/shipments/order/{order_id}/cancel",
+                web::put().to(handlers::cancel_shipment_by_order),
             )
     })
     .bind(format!("0.0.0.0:{port}"))?

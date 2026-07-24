@@ -1,7 +1,7 @@
-use serde::{Serialize, Deserialize};
-use uuid::Uuid;
-use sqlx::FromRow;
 use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
+use sqlx::FromRow;
+use uuid::Uuid;
 
 #[derive(Debug, Serialize, Deserialize, FromRow)]
 pub struct Inventory {
@@ -16,7 +16,7 @@ pub struct Inventory {
     pub low_stock_threshold: i32,
     pub unit: String,
     pub available: bool,
-    pub updated_at: DateTime<Utc>
+    pub updated_at: DateTime<Utc>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Default)]
@@ -33,7 +33,6 @@ pub struct UpdateStockRequest {
     pub low_stock_threshold: Option<i32>,
     pub reserved: Option<i32>,
 }
-
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct StockUpdateEvent {
@@ -60,9 +59,8 @@ pub struct CreateInventoryRequest {
     pub price: f64,
     pub quantity: i32,
     pub low_stock_threshold: i32,
-    pub unit: String
+    pub unit: String,
 }
-
 
 #[derive(Clone, Debug, Serialize, Deserialize, Default)]
 pub struct ProductEvent {
@@ -83,6 +81,5 @@ pub struct ProductEvent {
     pub reservation_id: Option<Uuid>,
     pub order_timestamp: Option<DateTime<Utc>>,
     pub expires_at: Option<DateTime<Utc>>,
-    pub user_id: Option<Uuid>
-    // pub status: OrderStatus,
+    pub user_id: Option<Uuid>, // pub status: OrderStatus,
 }

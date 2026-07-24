@@ -1,14 +1,11 @@
-
-use jsonwebtoken::{encode, Header, EncodingKey};
-use chrono;
-use crate::models::{UserRole};
-use sqlx::PgPool;
 use crate::models::Claims;
-use uuid::Uuid;
-use argon2::{Argon2, PasswordHash, PasswordHasher, PasswordVerifier};
+use crate::models::UserRole;
 use argon2::password_hash::rand_core::OsRng;
-
-
+use argon2::{Argon2, PasswordHash, PasswordHasher, PasswordVerifier};
+use chrono;
+use jsonwebtoken::{EncodingKey, Header, encode};
+use sqlx::PgPool;
+use uuid::Uuid;
 
 pub fn hash_password(password: &str) -> String {
     let salt = argon2::password_hash::SaltString::generate(&mut OsRng);
@@ -26,11 +23,15 @@ pub fn verify_password(hash: &str, password: &str) -> bool {
         .is_ok()
 }
 
-pub fn create_jwt(user_id: Uuid, role: &UserRole, secret: &str) -> Result<String, jsonwebtoken::errors::Error> {
+pub fn create_jwt(
+    user_id: Uuid,
+    role: &UserRole,
+    secret: &str,
+) -> Result<String, jsonwebtoken::errors::Error> {
     let expiration = chrono::Utc::now()
-    .checked_add_signed(chrono::Duration::hours(24))
-    .unwrap()
-    .timestamp() as usize;
+        .checked_add_signed(chrono::Duration::hours(24))
+        .unwrap()
+        .timestamp() as usize;
 
     let claims = Claims {
         sub: user_id,
@@ -38,17 +39,18 @@ pub fn create_jwt(user_id: Uuid, role: &UserRole, secret: &str) -> Result<String
         exp: expiration,
     };
 
-    encode(&Header::default(), &claims, &EncodingKey::from_secret(secret.as_ref()))
+    encode(
+        &Header::default(),
+        &claims,
+        &EncodingKey::from_secret(secret.as_ref()),
+    )
 }
 
 pub async fn user_exists(pool: &PgPool, email: &str) -> Result<bool, sqlx::Error> {
-    let row = sqlx::query_scalar::<_, i64>(
-            "SELECT 1 FROM users WHERE email = $1"
-        )
+    let row = sqlx::query_scalar::<_, i64>("SELECT 1 FROM users WHERE email = $1")
         .bind(email)
         .fetch_optional(pool)
         .await?;
-    
+
     Ok(row.is_some())
 }
-

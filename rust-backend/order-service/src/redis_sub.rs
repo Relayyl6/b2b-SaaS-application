@@ -1,9 +1,9 @@
 // src/redis_sub.rs
-// Listens for inventory/logistics events on Redis and updates order state.
+// Consumes workflow events from Redis Streams and updates order state.
 
 use crate::models::{OrderEvent, OrderStatus};
-use futures_util::StreamExt;
-use redis::{aio::Connection, Client};
+use platform::metrics;
+use platform::streams;
 use serde_json::Value;
 use sqlx::PgPool;
 use std::env;
@@ -14,105 +14,78 @@ use events::{
     update_order_failed_event, update_order_shipped_event,
 };
 
-#[allow(deprecated)]
+const EVENTS: &[&str] = &[
+    "inventory.rejected",
+    "inventory.reservation_expired",
+    "inventory.reserved",
+    "inventory.expired",
+    "inventory.released",
+    "inventory.finalized",
+    "order.delivered",
+    "logistics.shipment_updated",
+    "logistics.shipment_cancelled",
+];
+
 pub async fn listen_to_redis_events(pool: PgPool) -> Result<(), Box<dyn std::error::Error>> {
     let redis_url = env::var("REDIS_URL").map_err(|_| "REDIS_URL must be set in environment")?;
+    let consumer = env::var("CONSUMER_NAME").unwrap_or_else(|_| "order-service-1".to_string());
 
-    loop {
-        let client = Client::open(redis_url.as_str())?;
-
-        let conn: Connection = match client.get_async_connection().await {
-            Ok(c) => c,
-            Err(e) => {
-                eprintln!("❌ Failed to connect to Redis: {:?}", e);
-                tokio::time::sleep(std::time::Duration::from_secs(5)).await;
-                continue;
+    streams::consume_json::<Value, _, _>(
+        &redis_url,
+        "order-service",
+        &consumer,
+        EVENTS,
+        move |envelope| {
+            let pool = pool.clone();
+            async move {
+                let event_type = envelope.event_type.clone();
+                let result = handle_event(&pool, &event_type, envelope.payload).await;
+                metrics::inc_event(
+                    "order-service",
+                    &envelope.stream,
+                    &event_type,
+                    if result.is_ok() { "ok" } else { "error" },
+                );
+                if let Err(e) = result {
+                    eprintln!("order-service stream handler failed for {event_type}: {e:?}");
+                }
             }
-        };
-        let mut pubsub = conn.into_pubsub();
+        },
+    )
+    .await
+}
 
-        for channel in [
-            "inventory.rejected",
-            "inventory.reservation_expired",
-            "inventory.reserved",
-            "inventory.expired",
-            "inventory.released",
-            "inventory.finalized",
-            "order.delivered",
-            "logistics.shipment_updated",
-            "logistics.shipment_cancelled",
-        ] {
-            if let Err(e) = pubsub.subscribe(channel).await {
-                eprintln!("❌ Failed to subscribe to {}: {:?}", channel, e);
-                tokio::time::sleep(std::time::Duration::from_secs(5)).await;
-                continue;
-            }
+async fn handle_event(
+    pool: &PgPool,
+    event_type: &str,
+    payload: Value,
+) -> Result<(), Box<dyn std::error::Error>> {
+    if event_type.starts_with("logistics.") {
+        return handle_logistics_event(pool, event_type, payload).await;
+    }
+
+    let event: OrderEvent = match serde_json::from_value(payload) {
+        Ok(event) => event,
+        Err(_) => return Ok(()),
+    };
+
+    match event_type {
+        "inventory.rejected" => update_order_failed_event(pool, event).await,
+        "inventory.reservation_expired" | "inventory.expired" | "inventory.released" => {
+            update_order_cancelled_event(pool, event).await
         }
-
-        let mut stream = pubsub.on_message();
-
-        while let Some(msg) = stream.next().await {
-            let channel = msg.get_channel_name().to_string();
-            let payload: String = match msg.get_payload() {
-                Ok(p) => p,
-                Err(e) => {
-                    eprintln!("Failed to get payload from message: {:?}", e);
-                    continue;
-                }
-            };
-
-            if channel.starts_with("logistics.") {
-                if let Err(e) = handle_logistics_event(&pool, &channel, &payload).await {
-                    eprintln!("Failed handling logistics event: {e}");
-                }
-                continue;
-            }
-
-            let event: OrderEvent = match serde_json::from_str(&payload) {
-                Ok(ev) => ev,
-                Err(e) => {
-                    eprintln!(
-                        "Failed to parse OrderEvent JSON: {} -- payload: {}",
-                        e, payload
-                    );
-                    continue;
-                }
-            };
-
-            match channel.as_str() {
-                "inventory.rejected" => {
-                    let _ = update_order_failed_event(&pool, event.clone()).await;
-                }
-                "inventory.reservation_expired" | "inventory.expired" | "inventory.released" => {
-                    let _ = update_order_cancelled_event(&pool, event.clone()).await;
-                }
-                "inventory.reserved" => {
-                    let _ = update_order_confirmed_event(&pool, event.clone()).await;
-                }
-                "inventory.finalized" => {
-                    let _ = update_order_shipped_event(&pool, event.clone()).await;
-                }
-                "order.delivered" => {
-                    let _ = update_order_delivered_event(&pool, event.clone()).await;
-                }
-                other => eprintln!("Received unexpected event type: {}", other),
-            }
-        }
-
-        tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+        "inventory.reserved" => update_order_confirmed_event(pool, event).await,
+        "inventory.finalized" => update_order_shipped_event(pool, event).await,
+        "order.delivered" => update_order_delivered_event(pool, event).await,
+        _ => Ok(()),
     }
 }
 
 async fn handle_logistics_event(
     pool: &PgPool,
-    channel: &str,
-    payload: &str,
-) -> Result<(), sqlx::Error> {
-    let value: Value = match serde_json::from_str(payload) {
-        Ok(v) => v,
-        Err(_) => return Ok(()),
-    };
-
+    event_type: &str,
+    value: Value,
+) -> Result<(), Box<dyn std::error::Error>> {
     let order_id = value
         .get("order_id")
         .and_then(|v| v.as_str())
@@ -122,7 +95,7 @@ async fn handle_logistics_event(
         return Ok(());
     };
 
-    let status = match channel {
+    let status = match event_type {
         "logistics.shipment_cancelled" => Some(OrderStatus::Cancelled),
         "logistics.shipment_updated" => match value.get("status").and_then(|v| v.as_str()) {
             Some("intransit") => Some(OrderStatus::Shipped),

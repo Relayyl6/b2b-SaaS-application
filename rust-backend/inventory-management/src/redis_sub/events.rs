@@ -1,20 +1,21 @@
-use sqlx::PgPool;
-use uuid::Uuid;
-use reqwest::Client;
-use std::env;
+use crate::models::{ProductEvent, UpdateStockRequest};
 use crate::redis_pub::RedisPublisher;
-use tokio;
-use chrono::{Duration, Utc};
-use actix_web::web;
-use crate::models::{UpdateStockRequest, ProductEvent};
 use crate::redis_sub::InventoryRepo;
+use actix_web::web;
+use chrono::{Duration, Utc};
+use reqwest::Client;
+use sqlx::PgPool;
+use std::env;
+use tokio;
+use uuid::Uuid;
 
 pub async fn create_product_from_event(
     _pool: &PgPool,
-    event: ProductEvent
+    event: ProductEvent,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let client = Client::new();
-    let service_url = env::var("INVENTORY_SERVICE_URL").unwrap_or_else(|_| "http://localhost:3002".into());
+    let service_url =
+        env::var("INVENTORY_SERVICE_URL").unwrap_or_else(|_| "http://localhost:3002".into());
     let url = format!("{}/inventory", service_url);
 
     let resp = client
@@ -34,7 +35,10 @@ pub async fn create_product_from_event(
         .await?;
 
     if resp.status().is_success() {
-        println!("✅({}) Created product {:?} via API route", event.event_type, event.name);
+        println!(
+            "✅({}) Created product {:?} via API route",
+            event.event_type, event.name
+        );
     } else {
         eprintln!("❌ Failed to create product: {:?}", resp.text().await?);
     }
@@ -44,10 +48,11 @@ pub async fn create_product_from_event(
 
 pub async fn update_product_from_event(
     _pool: &PgPool,
-    event: ProductEvent
+    event: ProductEvent,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let client = Client::new();
-    let service_url = env::var("INVENTORY_SERVICE_URL").unwrap_or_else(|_| "http://localhost:3002".into());
+    let service_url =
+        env::var("INVENTORY_SERVICE_URL").unwrap_or_else(|_| "http://localhost:3002".into());
     let url = format!("{}/inventory/{}/update", service_url, event.supplier_id);
 
     let resp = client
@@ -70,7 +75,10 @@ pub async fn update_product_from_event(
         .await?;
 
     if resp.status().is_success() {
-        println!("🔁({}) Updated product {:?} via API route", event.event_type, event.name);
+        println!(
+            "🔁({}) Updated product {:?} via API route",
+            event.event_type, event.name
+        );
     } else {
         eprintln!("❌ Failed to update product: {:?}", resp.text().await?);
     }
@@ -80,16 +88,23 @@ pub async fn update_product_from_event(
 
 pub async fn delete_product_from_event(
     _pool: &PgPool,
-    event: ProductEvent
+    event: ProductEvent,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let client = Client::new();
-    let service_url = env::var("INVENTORY_SERVICE_URL").unwrap_or_else(|_| "http://localhost:3002".into());
-    let url = format!("{}/inventory/{}/{}", service_url, event.supplier_id, event.product_id);
+    let service_url =
+        env::var("INVENTORY_SERVICE_URL").unwrap_or_else(|_| "http://localhost:3002".into());
+    let url = format!(
+        "{}/inventory/{}/{}",
+        service_url, event.supplier_id, event.product_id
+    );
 
     let resp = client.delete(&url).send().await?;
 
     if resp.status().is_success() {
-        println!("🗑️({}) Deleted product {} via API route", event.event_type, event.product_id);
+        println!(
+            "🗑️({}) Deleted product {} via API route",
+            event.event_type, event.product_id
+        );
     } else {
         eprintln!("❌ Failed to delete product: {:?}", resp.text().await?);
     }
@@ -100,9 +115,8 @@ pub async fn delete_product_from_event(
 pub async fn reserve_stock_from_order(
     pool: &PgPool,
     redis_pub: web::Data<RedisPublisher>,
-    event: ProductEvent
+    event: ProductEvent,
 ) -> Result<(), Box<dyn std::error::Error>> {
-
     // check the expiration date of the order
     // Find all expired reservations that have not been released
     let expired_reservations = sqlx::query!(
@@ -156,7 +170,8 @@ pub async fn reserve_stock_from_order(
             ..Default::default()
         };
 
-        for event in &["inventory.expired"] { // , "order.cancelled"       these two events are analogous
+        for event in &["inventory.expired"] {
+            // , "order.cancelled"       these two events are analogous
             if let Err(e) = redis_pub.publish(event, &cancel_event).await {
                 eprintln!("Redis publish error (expired): {}", e);
 
@@ -176,15 +191,12 @@ pub async fn reserve_stock_from_order(
     let qty_requested = event.quantity.ok_or("Missing quantity")?;
     let user_id = event.user_id.ok_or("Missing user_id")?;
 
-
     // adjust timing, configurable to add flexibility for when the customer is able to pay
     let expires_at = Utc::now() + Duration::seconds(2 * 24 * 60 * 60);
-
 
     // Atomically check & reserve stock
     let mut tx = pool.begin().await?;
 
-    
     // let existing: Option<(Uuid, i32)> = //
 
     // ensure reservation for this order doesn't already exist (idempotency)
@@ -193,11 +205,12 @@ pub async fn reserve_stock_from_order(
             SELECT reservation_id, qty
             FROM reservations
             WHERE order_id = $1
-        "#
+        "#,
     )
     .bind(order_id)
     .fetch_optional(&mut *tx)
-    .await {
+    .await
+    {
         tx.commit().await?;
         let success_event = ProductEvent {
             event_type: "inventory.reserved".into(),
@@ -211,11 +224,12 @@ pub async fn reserve_stock_from_order(
             ..Default::default()
         };
 
-        for event in &["inventory.reserved"] { // ,  "order.confirmed"
+        for event in &["inventory.reserved"] {
+            // ,  "order.confirmed"
             if let Err(e) = redis_pub.publish(event, &success_event).await {
                 eprintln!("Redis publish error (reserved): {}", e);
 
-                 // wait before retrying
+                // wait before retrying
                 tokio::time::sleep(std::time::Duration::from_secs(5)).await;
                 continue;
             }
@@ -230,7 +244,7 @@ pub async fn reserve_stock_from_order(
             SELECT quantity, reserved
             FROM inventory
             WHERE product_id = $1 FOR UPDATE
-        "#
+        "#,
     )
     .bind(product_id)
     .fetch_one(&mut *tx)
@@ -252,11 +266,15 @@ pub async fn reserve_stock_from_order(
             ..Default::default()
         };
 
-        for event in &["inventory.rejected"] { // , "order.failed"
+        for event in &["inventory.rejected"] {
+            // , "order.failed"
             if let Err(e) = redis_pub.publish(event, &reject_event).await {
-                eprintln!("Redis inventory.rejected publish error (insuffieient stock): {}", e);
+                eprintln!(
+                    "Redis inventory.rejected publish error (insuffieient stock): {}",
+                    e
+                );
 
-                 // wait before retrying
+                // wait before retrying
                 tokio::time::sleep(std::time::Duration::from_secs(5)).await;
                 continue;
             }
@@ -312,11 +330,11 @@ pub async fn reserve_stock_from_order(
         ..Default::default()
     };
 
-
-    for event in &["inventory.reserved"] { //  , "order.confirmed"
+    for event in &["inventory.reserved"] {
+        //  , "order.confirmed"
         if let Err(e) = redis_pub.publish(event, &success_event).await {
             eprintln!("Redis publish error (reserved): {}", e);
-             // wait before retrying
+            // wait before retrying
             tokio::time::sleep(std::time::Duration::from_secs(5)).await;
             continue;
         }
@@ -418,10 +436,11 @@ pub async fn release_stock_from_order(
         ..Default::default()
     };
 
-    for event in &["inventory.released"] { // , "order.cancelled"
+    for event in &["inventory.released"] {
+        // , "order.cancelled"
         if let Err(e) = redis_pub.publish(event, &release_event).await {
             eprintln!("Redis publish error (released): {}", e);
-             // wait before retrying
+            // wait before retrying
             tokio::time::sleep(std::time::Duration::from_secs(5)).await;
             continue;
         }
@@ -437,7 +456,6 @@ pub async fn finalize_order_after_payment(
     supplier_id: Uuid,
     event: ProductEvent,
 ) -> Result<(), Box<dyn std::error::Error>> {
-
     let order_id = event.order_id.ok_or("missing order_id")?;
     let qty = event.quantity.unwrap_or(0);
     let product_id = event.product_id;
@@ -494,7 +512,7 @@ pub async fn finalize_order_after_payment(
 
     let update_req = UpdateStockRequest {
         quantity_change: Some(-(qty)), // reduce stock
-        reserved: Some(-(qty)), // reduce reserved stock level by same amount
+        reserved: Some(-(qty)),        // reduce reserved stock level by same amount
         ..Default::default()
     };
 
@@ -514,7 +532,10 @@ pub async fn finalize_order_after_payment(
         ..Default::default()
     };
 
-    if let Err(e) = redis_pub.publish("inventory.finalized", &finalised_event).await {
+    if let Err(e) = redis_pub
+        .publish("inventory.finalized", &finalised_event)
+        .await
+    {
         eprintln!("Redis publish error: {}", e);
     }
 
