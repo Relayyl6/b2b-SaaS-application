@@ -10,6 +10,7 @@ use crate::stripe::StripeClient;
 // We need a subset of the ProductEvent/OrderEvent to parse the payload
 #[derive(Debug, serde::Deserialize)]
 pub struct OrderContextEvent {
+    pub tenant_id: Option<Uuid>,
     pub order_id: Option<Uuid>,
     pub user_id: Option<Uuid>,
     pub supplier_id: Option<Uuid>,
@@ -18,7 +19,7 @@ pub struct OrderContextEvent {
     pub price: Option<f64>,
 }
 
-const EVENTS: &[&str] = &["inventory.reserved", "order.cancelled", "order.refunded", "order.delivered"];
+const EVENTS: &[&str] = &["inventory.reserved", "order.cancelled", "order.refunded", "order.delivered", "payment.refund_command"];
 
 pub async fn listen_to_redis_events(
     repo: web::Data<PaymentRepo>,
@@ -37,6 +38,23 @@ pub async fn listen_to_redis_events(
             let stripe_client = stripe_client.clone();
             async move {
                 let event_type = envelope.event_type.clone();
+                let event = &envelope.payload;
+                let tenant_id = envelope.tenant_id.or(event.tenant_id);
+
+                if tenant_id.is_none() || tenant_id == Some(uuid::Uuid::nil()) {
+                    tracing::warn!(%event_type, stream = %envelope.stream, "Missing tenant_id in payment stream event — skipping business logic");
+                    metrics::inc_event("payments", &envelope.stream, &event_type, "tenant_mismatch");
+                    return Ok(());
+                }
+
+                if let (Some(env_tid), Some(pay_tid)) = (envelope.tenant_id, event.tenant_id) {
+                    if env_tid != pay_tid {
+                        tracing::warn!(%event_type, ?env_tid, ?pay_tid, "Tenant ID mismatch between envelope and payload — skipping business logic");
+                        metrics::inc_event("payments", &envelope.stream, &event_type, "tenant_mismatch");
+                        return Ok(());
+                    }
+                }
+
                 let result = handle_event(&repo, &stripe_client, &event_type, envelope.payload).await;
 
                 metrics::inc_event(
@@ -97,7 +115,7 @@ async fn handle_event(
             repo.create_intent(&req).await?;
             println!("Auto-generated PaymentIntent for order {}", order_id);
         }
-        "order.cancelled" => {
+        "order.cancelled" | "payment.refund_command" => {
             let order_id = event.order_id.ok_or("Missing order_id")?;
             if let Ok(intent) = repo.get_intent_by_order_id(order_id).await {
                 if intent.status == crate::models::PaymentStatus::Succeeded {

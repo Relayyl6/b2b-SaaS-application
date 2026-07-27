@@ -19,6 +19,7 @@ pub async fn create_shipment(
     match repo.create_shipment(&req).await {
         Ok(shipment) => {
             let event = LogisticsEvent {
+                tenant_id: Some(shipment.supplier_id),
                 event_type: "logistics.shipment_created".into(),
                 shipment_id: shipment.id,
                 order_id: shipment.order_id,
@@ -93,6 +94,7 @@ pub async fn update_status(
     match repo.update_status(path.into_inner(), &req).await {
         Ok(shipment) => {
             let event = LogisticsEvent {
+                tenant_id: Some(shipment.supplier_id),
                 event_type: "logistics.shipment_updated".into(),
                 shipment_id: shipment.id,
                 order_id: shipment.order_id,
@@ -131,6 +133,7 @@ pub async fn cancel_shipment_by_order(
     match repo.cancel_by_order_id(path.into_inner()).await {
         Ok(shipment) => {
             let event = LogisticsEvent {
+                tenant_id: Some(shipment.supplier_id),
                 event_type: "logistics.shipment_cancelled".into(),
                 shipment_id: shipment.id,
                 order_id: shipment.order_id,

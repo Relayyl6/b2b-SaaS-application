@@ -6,6 +6,7 @@ use uuid::Uuid;
 #[derive(Debug, Serialize, Deserialize, FromRow)]
 pub struct Inventory {
     pub id: Uuid,
+    pub tenant_id: Uuid,
     pub supplier_id: Uuid,
     pub product_id: Uuid,
     pub name: String,
@@ -36,6 +37,7 @@ pub struct UpdateStockRequest {
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct StockUpdateEvent {
+    pub tenant_id: Option<Uuid>,
     pub product_id: Uuid,
     pub supplier_id: Uuid,
     pub new_quantity: i32,
@@ -63,7 +65,9 @@ pub struct CreateInventoryRequest {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, Default)]
+#[serde(default)]
 pub struct ProductEvent {
+    pub tenant_id: Option<Uuid>,
     pub event_type: String,
     pub product_id: Uuid,
     pub supplier_id: Uuid,

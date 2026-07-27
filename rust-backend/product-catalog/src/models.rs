@@ -6,6 +6,7 @@ use uuid::Uuid;
 #[derive(Debug, Serialize, Deserialize, FromRow)]
 pub struct Product {
     pub id: Uuid,
+    pub tenant_id: Uuid,
     pub product_id: Uuid,
     pub supplier_id: Uuid,
     pub name: String,
@@ -26,6 +27,7 @@ pub struct Product {
 #[derive(Debug, Serialize, Deserialize, FromRow)]
 pub struct ProductAsset {
     pub id: Uuid,
+    pub tenant_id: Uuid,
     pub product_id: Uuid,
     pub supplier_id: Uuid,
     pub provider: String,
@@ -111,7 +113,9 @@ pub struct SignedUploadResponse {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[serde(default)]
 pub struct ProductEvent {
+    pub tenant_id: Option<Uuid>,
     pub event_type: String,
     pub product_id: Uuid,
     pub supplier_id: Uuid,

@@ -919,12 +919,20 @@ checksum = "1aaf95b3e5c8f23aa320147307562d361db0ae0d51242340f558153b4eb2439b"
 name = "e2e-tests"
 version = "0.1.0"
 dependencies = [
+ "actix-web",
+ "chrono",
  "futures-util",
+ "hex",
+ "hmac",
+ "jsonwebtoken",
  "lapin",
  "platform",
  "redis",
+ "reqwest",
  "serde",
  "serde_json",
+ "sha2",
+ "sqlx",
  "tokio",
  "uuid",
 ]
@@ -2476,8 +2484,10 @@ name = "platform"
 version = "0.1.0"
 dependencies = [
  "actix-web",
+ "chrono",
  "deadpool-redis",
  "futures-util",
+ "jsonwebtoken",
  "opentelemetry",
  "opentelemetry-otlp",
  "opentelemetry_sdk",
@@ -2485,11 +2495,13 @@ dependencies = [
  "redis",
  "serde",
  "serde_json",
+ "sqlx",
  "thiserror 2.0.18",
  "tokio",
  "tracing",
  "tracing-opentelemetry",
  "tracing-subscriber",
+ "uuid",
 ]
 
 [[package]]
@@ -4005,6 +4017,7 @@ dependencies = [
  "getrandom 0.4.2",
  "js-sys",
  "serde_core",
+ "sha1_smol",
  "wasm-bindgen",
 ]
 

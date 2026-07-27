@@ -6,6 +6,7 @@ use uuid::Uuid;
 #[derive(Debug, Serialize, Deserialize, FromRow)]
 pub struct Users {
     pub id: Uuid,
+    pub tenant_id: Uuid,
     pub email: String,
     #[serde(skip_serializing)]
     pub password: String,
@@ -52,11 +53,19 @@ pub struct AuthResponse {
     pub token: String,
 }
 
+fn default_tenant_id() -> Uuid {
+    Uuid::nil()
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Claims {
     pub sub: Uuid,
     pub role: UserRole,
     pub exp: usize,
+    #[serde(default = "default_tenant_id")]
+    pub tenant_id: Uuid,
+    #[serde(default)]
+    pub tier: platform::tenant::PricingTier,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -141,6 +150,8 @@ mod tests {
             sub: id,
             role: UserRole::User,
             exp: 1234567890,
+            tenant_id: Uuid::nil(),
+            tier: platform::tenant::PricingTier::Free,
         };
         let serialized = serde_json::to_string(&claims).unwrap();
         assert!(serialized.contains(&id.to_string()));

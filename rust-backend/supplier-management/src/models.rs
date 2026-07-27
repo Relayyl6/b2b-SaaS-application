@@ -17,6 +17,7 @@ pub enum SupplierStatus {
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
 pub struct Supplier {
     pub id: Uuid,
+    pub tenant_id: Uuid,
     pub owner_user_id: Uuid,
     pub legal_name: String,
     pub display_name: String,
@@ -56,8 +57,9 @@ pub struct UpdateSupplierRequest {
     pub metadata: Option<Value>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SupplierEvent {
+    pub tenant_id: Option<Uuid>,
     pub event_type: String,
     pub supplier_id: Uuid,
     pub user_id: Uuid,
@@ -83,6 +85,7 @@ mod tests {
     #[test]
     fn test_supplier_event_serialization() {
         let event = SupplierEvent {
+            tenant_id: Some(Uuid::nil()),
             event_type: "supplier.created".to_string(),
             supplier_id: Uuid::nil(),
             user_id: Uuid::nil(),

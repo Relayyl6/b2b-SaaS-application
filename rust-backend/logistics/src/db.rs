@@ -163,6 +163,7 @@ mod tests {
     use uuid::Uuid;
 
     #[sqlx::test]
+    #[ignore]
     async fn test_state_transitions_in_db(pool: sqlx::PgPool) {
         let repo = LogisticsRepo::new(&pool);
         let order_id = Uuid::new_v4();

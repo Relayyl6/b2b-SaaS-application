@@ -75,6 +75,7 @@ pub async fn update_stock(
 
             // Expanded event payload to reflect possible new product fields
             let event = StockUpdateEvent {
+                tenant_id: Some(inventory.supplier_id),
                 product_id: inventory.product_id,
                 supplier_id: inventory.supplier_id,
                 new_quantity: inventory.quantity,

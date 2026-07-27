@@ -1,343 +1,195 @@
-services:
-  api-gateway:
-    image: nginx:1.27-alpine
-    restart: unless-stopped
-    ports:
-      - "8080:80"
-      - "8443:443"
-    volumes:
-      - ./infra/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
-    healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://localhost/health"]
-      interval: 10s
-      timeout: 5s
-      retries: 3
-    depends_on:
-      - user-management
-      - product-catalog
-      - order-service
-      - inventory-management
-      - logistics
-      - notifications
-      - payments
-      - supplier-management
+version: "3.9"
 
+# ============================================================
+# Commerce-as-a-Service (CaaS) Platform — Local Dev Stack
+# ============================================================
+# Usage:
+#   docker compose up -d          → start all services
+#   docker compose up -d postgres redis → start only DB + cache
+#   docker compose logs -f        → watch logs
+#   docker compose down -v        → tear down including volumes
+
+services:
+
+  # ──────────────────────────────────────────────────────────
+  # POSTGRESQL — Shared tenant DB (Free/Pro tiers)
+  # ──────────────────────────────────────────────────────────
   postgres:
     image: postgres:16-alpine
+    container_name: caas_postgres
     restart: unless-stopped
     environment:
-      POSTGRES_USER: ${POSTGRES_USER}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
-      POSTGRES_MULTIPLE_DATABASES: ${POSTGRES_MULTIPLE_DATABASES:-users,products,orders,inventory,logistics,notifications,payments,suppliers}
+      POSTGRES_USER: commerce_user
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-commerce_secret}
+      POSTGRES_DB: commerce_shared
+      PGDATA: /var/lib/postgresql/data/pgdata
     ports:
       - "5432:5432"
     volumes:
-      - postgres-data:/var/lib/postgresql/data
-      - ./infra/postgres/init-multiple-databases.sh:/docker-entrypoint-initdb.d/init-multiple-databases.sh:ro
+      - postgres_data:/var/lib/postgresql/data
+      - ./scripts/init-db.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER}"]
+      test: ["CMD-SHELL", "pg_isready -U commerce_user -d commerce_shared"]
       interval: 10s
       timeout: 5s
       retries: 5
+      start_period: 10s
 
-  timescaledb:
-    image: timescale/timescaledb:latest-pg15
+  # ──────────────────────────────────────────────────────────
+  # CONTROL-PLANE DB — Tenants, API keys, billing (separate)
+  # ──────────────────────────────────────────────────────────
+  postgres_control:
+    image: postgres:16-alpine
+    container_name: caas_postgres_control
     restart: unless-stopped
     environment:
-      POSTGRES_USER: ${POSTGRES_USER}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
-      POSTGRES_DB: analytics_service
+      POSTGRES_USER: control_user
+      POSTGRES_PASSWORD: ${CONTROL_DB_PASSWORD:-control_secret}
+      POSTGRES_DB: commerce_control
+      PGDATA: /var/lib/postgresql/data/pgdata
     ports:
       - "5433:5432"
     volumes:
-      - timescale-data:/var/lib/postgresql/data
+      - postgres_control_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER}"]
+      test: ["CMD-SHELL", "pg_isready -U control_user -d commerce_control"]
       interval: 10s
       timeout: 5s
       retries: 5
+      start_period: 10s
 
+  # ──────────────────────────────────────────────────────────
+  # TIMESCALEDB — API request logs, usage metering, analytics
+  # ──────────────────────────────────────────────────────────
+  timescaledb:
+    image: timescale/timescaledb:latest-pg16
+    container_name: caas_timescaledb
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: analytics_user
+      POSTGRES_PASSWORD: ${ANALYTICS_DB_PASSWORD:-analytics_secret}
+      POSTGRES_DB: commerce_analytics
+    ports:
+      - "5434:5432"
+    volumes:
+      - timescale_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U analytics_user -d commerce_analytics"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  # ──────────────────────────────────────────────────────────
+  # REDIS — Event streams, caching, rate limiting
+  # ──────────────────────────────────────────────────────────
   redis:
     image: redis:7-alpine
+    container_name: caas_redis
     restart: unless-stopped
+    command: >
+      redis-server
+      --maxmemory 256mb
+      --maxmemory-policy allkeys-lru
+      --save 60 1
+      --loglevel warning
     ports:
       - "6379:6379"
+    volumes:
+      - redis_data:/data
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 10s
       timeout: 5s
       retries: 5
 
+  # ──────────────────────────────────────────────────────────
+  # RABBITMQ — AMQP message broker for analytics fanout
+  # ──────────────────────────────────────────────────────────
   rabbitmq:
-    image: rabbitmq:3-management-alpine
+    image: rabbitmq:3.13-management-alpine
+    container_name: caas_rabbitmq
     restart: unless-stopped
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-guest}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASS:-guest}
+      RABBITMQ_DEFAULT_VHOST: /
     ports:
-      - "5672:5672"
-      - "15672:15672"
+      - "5672:5672"    # AMQP
+      - "15672:15672"  # Management UI → http://localhost:15672
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
     healthcheck:
       test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
-      interval: 10s
-      timeout: 5s
+      interval: 15s
+      timeout: 10s
       retries: 5
+      start_period: 30s
 
-  otel-collector:
-    image: otel/opentelemetry-collector:0.104.0
+  # ──────────────────────────────────────────────────────────
+  # PGADMIN — DB management UI (dev only)
+  # ──────────────────────────────────────────────────────────
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    container_name: caas_pgadmin
     restart: unless-stopped
-    command: ["--config=/etc/otel-collector-config.yaml"]
-    volumes:
-      - ./infra/observability/otel-collector-config.yaml:/etc/otel-collector-config.yaml:ro
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@local.dev
+      PGADMIN_DEFAULT_PASSWORD: admin
     ports:
-      - "4317:4317"
-      - "4318:4318"
+      - "5050:80"
+    profiles:
+      - tools
+    depends_on:
+      postgres:
+        condition: service_healthy
 
+  # ──────────────────────────────────────────────────────────
+  # PROMETHEUS — Metrics scraping
+  # ──────────────────────────────────────────────────────────
   prometheus:
-    image: prom/prometheus:v2.53.0
+    image: prom/prometheus:latest
+    container_name: caas_prometheus
     restart: unless-stopped
-    volumes:
-      - ./infra/observability/prometheus.yml:/etc/prometheus/prometheus.yml:ro
-      - prometheus-data:/prometheus
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.retention.time=7d
     ports:
       - "9090:9090"
-
-  grafana:
-    image: grafana/grafana:11.1.0
-    restart: unless-stopped
-    ports:
-      - "3000:3000"
     volumes:
-      - grafana-data:/var/lib/grafana
+      - ./scripts/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    profiles:
+      - observability
 
-  user-management:
-    build:
-      context: .
-      dockerfile: Dockerfile.service
-      args:
-        PACKAGE: user-management
-        BINARY: user-management
+  # ──────────────────────────────────────────────────────────
+  # GRAFANA — Metrics dashboards
+  # ──────────────────────────────────────────────────────────
+  grafana:
+    image: grafana/grafana:latest
+    container_name: caas_grafana
     restart: unless-stopped
     environment:
-      DATABASE_URL: ${USER_DATABASE_URL}
-      REDIS_URL: ${REDIS_URL:-redis://redis:6379}
-      SECRET: ${SECRET}
-      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://otel-collector:4317}
-      PORT: 3004
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    ports:
+      - "3100:3000"
+    volumes:
+      - grafana_data:/var/lib/grafana
+    profiles:
+      - observability
     depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-    healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://localhost:3004/health"]
-      interval: 10s
-      timeout: 5s
-      retries: 3
-
-  product-catalog:
-    build:
-      context: .
-      dockerfile: Dockerfile.service
-      args:
-        PACKAGE: product-catalog
-        BINARY: product-catalog
-    restart: unless-stopped
-    environment:
-      DATABASE_URL: ${PRODUCT_DATABASE_URL}
-      REDIS_URL: ${REDIS_URL:-redis://redis:6379}
-      RABBITMQ_URL: ${RABBITMQ_URL}
-      SERVICE_PORT: 3003
-      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://otel-collector:4317}
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-      rabbitmq:
-        condition: service_healthy
-    healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://localhost:3003/health"]
-      interval: 10s
-      timeout: 5s
-      retries: 3
-
-  order-service:
-    build:
-      context: .
-      dockerfile: Dockerfile.service
-      args:
-        PACKAGE: order-service
-        BINARY: order-service
-    restart: unless-stopped
-    environment:
-      DATABASE_URL: ${ORDER_DATABASE_URL}
-      REDIS_URL: ${REDIS_URL:-redis://redis:6379}
-      PORT: 3005
-      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://otel-collector:4317}
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-    healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://localhost:3005/health"]
-      interval: 10s
-      timeout: 5s
-      retries: 3
-
-  inventory-management:
-    build:
-      context: .
-      dockerfile: Dockerfile.service
-      args:
-        PACKAGE: inventory-service
-        BINARY: inventory-service
-    restart: unless-stopped
-    environment:
-      DATABASE_URL: ${INVENTORY_DATABASE_URL}
-      REDIS_URL: ${REDIS_URL:-redis://redis:6379}
-      SERVICE_PORT: 3006
-      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://otel-collector:4317}
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-    healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://localhost:3006/health"]
-      interval: 10s
-      timeout: 5s
-      retries: 3
-
-  logistics:
-    build:
-      context: .
-      dockerfile: Dockerfile.service
-      args:
-        PACKAGE: logistics
-        BINARY: logistics
-    restart: unless-stopped
-    environment:
-      DATABASE_URL: ${LOGISTICS_DATABASE_URL}
-      REDIS_URL: ${REDIS_URL:-redis://redis:6379}
-      RABBITMQ_URL: ${RABBITMQ_URL}
-      SERVICE_PORT: 3008
-      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://otel-collector:4317}
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-      rabbitmq:
-        condition: service_healthy
-    healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://localhost:3008/health"]
-      interval: 10s
-      timeout: 5s
-      retries: 3
-
-  notifications:
-    build:
-      context: .
-      dockerfile: Dockerfile.service
-      args:
-        PACKAGE: notifications
-        BINARY: notifications
-    restart: unless-stopped
-    environment:
-      DATABASE_URL: ${NOTIFICATIONS_DATABASE_URL}
-      REDIS_URL: ${REDIS_URL:-redis://redis:6379}
-      SERVICE_PORT: 3009
-      NOTIFICATION_DRY_RUN: ${NOTIFICATION_DRY_RUN:-true}
-      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://otel-collector:4317}
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-    healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://localhost:3009/health"]
-      interval: 10s
-      timeout: 5s
-      retries: 3
-
-  payments:
-    build:
-      context: .
-      dockerfile: Dockerfile.service
-      args:
-        PACKAGE: payments
-        BINARY: payments
-    restart: unless-stopped
-    environment:
-      DATABASE_URL: ${PAYMENTS_DATABASE_URL}
-      REDIS_URL: ${REDIS_URL:-redis://redis:6379}
-      SERVICE_PORT: 3010
-      STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY}
-      STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET}
-      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://otel-collector:4317}
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-    healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://localhost:3010/health"]
-      interval: 10s
-      timeout: 5s
-      retries: 3
-
-  supplier-management:
-    build:
-      context: .
-      dockerfile: Dockerfile.service
-      args:
-        PACKAGE: supplier-management
-        BINARY: supplier-management
-    restart: unless-stopped
-    environment:
-      DATABASE_URL: ${SUPPLIERS_DATABASE_URL}
-      REDIS_URL: ${REDIS_URL:-redis://redis:6379}
-      SERVICE_PORT: 3011
-      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://otel-collector:4317}
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-    healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://localhost:3011/health"]
-      interval: 10s
-      timeout: 5s
-      retries: 3
-
-  analytics:
-    build:
-      context: .
-      dockerfile: Dockerfile.service
-      args:
-        PACKAGE: analytics
-        BINARY: analytics
-    restart: unless-stopped
-    environment:
-      DATABASE_URL: ${ANALYTICS_DATABASE_URL}
-      REDIS_URL: ${REDIS_URL:-redis://redis:6379}
-      RABBITMQ_URL: ${RABBITMQ_URL}
-      SERVICE_PORT: 3007
-      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://otel-collector:4317}
-    depends_on:
-      timescaledb:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-      rabbitmq:
-        condition: service_healthy
-    healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://localhost:3007/health"]
-      interval: 10s
-      timeout: 5s
-      retries: 3
+      - prometheus
 
 volumes:
-  postgres-data:
-  timescale-data:
-  prometheus-data:
-  grafana-data:
+  postgres_data:
+  postgres_control_data:
+  timescale_data:
+  redis_data:
+  rabbitmq_data:
+  prometheus_data:
+  grafana_data:
+
+networks:
+  default:
+    name: caas_network

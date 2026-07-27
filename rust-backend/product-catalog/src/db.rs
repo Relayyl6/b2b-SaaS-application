@@ -26,7 +26,7 @@ impl ProductRepo {
             r#"
             INSERT INTO products (product_id, supplier_id, name, description, category, price, unit, quantity, available, low_stock_threshold, sku, variants)
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
-            RETURNING id, product_id, supplier_id, name, description, category, price, unit, quantity, available, low_stock_threshold, sku, variants, created_at, updated_at, deleted_at
+            RETURNING id, tenant_id, product_id, supplier_id, name, description, category, price, unit, quantity, available, low_stock_threshold, sku, variants, created_at, updated_at, deleted_at
             "#,
         )
         .bind(product_id)
@@ -49,7 +49,7 @@ impl ProductRepo {
     pub async fn get_by_supplier(&self, supplier_id: Uuid) -> Result<Vec<Product>, sqlx::Error> {
         sqlx::query_as::<_, Product>(
             r#"
-                SELECT id, product_id, supplier_id, name, description, category, price, unit, quantity, available, low_stock_threshold, sku, variants, created_at, updated_at, deleted_at
+                SELECT id, tenant_id, product_id, supplier_id, name, description, category, price, unit, quantity, available, low_stock_threshold, sku, variants, created_at, updated_at, deleted_at
                 FROM products
                 WHERE supplier_id = $1 AND deleted_at IS NULL
                 ORDER BY name
@@ -68,7 +68,7 @@ impl ProductRepo {
     ) -> Result<Product, sqlx::Error> {
         sqlx::query_as::<_, Product>(
             r#"
-            SELECT id, supplier_id, product_id, name, description, category, price, unit, quantity, available, low_stock_threshold, sku, variants, created_at, updated_at, deleted_at
+            SELECT id, tenant_id, supplier_id, product_id, name, description, category, price, unit, quantity, available, low_stock_threshold, sku, variants, created_at, updated_at, deleted_at
             FROM products
             WHERE supplier_id = $1 AND product_id = $2 AND deleted_at IS NULL
             "#,
@@ -108,7 +108,7 @@ impl ProductRepo {
               variants = COALESCE($11, variants),
               updated_at = NOW()
             WHERE supplier_id = $12 AND product_id = $13 AND deleted_at IS NULL
-            RETURNING id, product_id, supplier_id, name, description, category, price, unit, quantity, available, low_stock_threshold, sku, variants, created_at, updated_at, deleted_at
+            RETURNING id, tenant_id, product_id, supplier_id, name, description, category, price, unit, quantity, available, low_stock_threshold, sku, variants, created_at, updated_at, deleted_at
             "#,
         )
         .bind(req.name.as_ref())
@@ -157,7 +157,7 @@ impl ProductRepo {
     ) -> Result<Vec<Product>, sqlx::Error> {
         let rows = sqlx::query_as::<_, Product>(
             r#"
-            SELECT id, product_id, supplier_id, name, description, category, price, unit, quantity, available, low_stock_threshold, sku, variants, created_at, updated_at, deleted_at
+            SELECT id, tenant_id, product_id, supplier_id, name, description, category, price, unit, quantity, available, low_stock_threshold, sku, variants, created_at, updated_at, deleted_at
             FROM products
             WHERE deleted_at IS NULL
               AND ($1::text IS NULL OR category = $1)
@@ -195,7 +195,7 @@ impl ProductRepo {
                 r#"
                 INSERT INTO products (product_id, supplier_id, name, description, category, price, unit, quantity, available, low_stock_threshold, sku, variants)
                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
-                RETURNING id, product_id, supplier_id, name, description, category, price, unit, quantity, available, low_stock_threshold, sku, variants, created_at, updated_at, deleted_at
+                RETURNING id, tenant_id, product_id, supplier_id, name, description, category, price, unit, quantity, available, low_stock_threshold, sku, variants, created_at, updated_at, deleted_at
                 "#,
             )
             .bind(it.product_id.unwrap_or_else(Uuid::new_v4))
@@ -269,7 +269,7 @@ impl ProductRepo {
                 gen_random_uuid(), $1, $2, $3, $4, $5, $6,
                 $7, $8, $9, $10, $11, $12
             )
-            RETURNING id, product_id, supplier_id, provider, public_id, url, secure_url,
+            RETURNING id, tenant_id, product_id, supplier_id, provider, public_id, url, secure_url,
                       width, height, bytes, format, alt_text, is_primary, created_at
             "#,
         )
@@ -300,7 +300,7 @@ impl ProductRepo {
     ) -> Result<Vec<ProductAsset>, sqlx::Error> {
         sqlx::query_as::<_, ProductAsset>(
             r#"
-            SELECT id, product_id, supplier_id, provider, public_id, url, secure_url,
+            SELECT id, tenant_id, product_id, supplier_id, provider, public_id, url, secure_url,
                    width, height, bytes, format, alt_text, is_primary, created_at
             FROM product_assets
             WHERE supplier_id = $1 AND product_id = $2

@@ -28,6 +28,22 @@ pub fn create_jwt(
     role: &UserRole,
     secret: &str,
 ) -> Result<(String, String), jsonwebtoken::errors::Error> {
+    create_jwt_with_tenant(
+        user_id,
+        role,
+        Uuid::nil(),
+        platform::tenant::PricingTier::Free,
+        secret,
+    )
+}
+
+pub fn create_jwt_with_tenant(
+    user_id: Uuid,
+    role: &UserRole,
+    tenant_id: Uuid,
+    tier: platform::tenant::PricingTier,
+    secret: &str,
+) -> Result<(String, String), jsonwebtoken::errors::Error> {
     let access_exp = chrono::Utc::now()
         .checked_add_signed(chrono::Duration::minutes(15))
         .unwrap()
@@ -42,12 +58,16 @@ pub fn create_jwt(
         sub: user_id,
         role: role.clone(),
         exp: access_exp,
+        tenant_id,
+        tier,
     };
 
     let refresh_claims = Claims {
         sub: user_id,
         role: role.clone(),
         exp: refresh_exp,
+        tenant_id,
+        tier,
     };
 
     let access_token = encode(

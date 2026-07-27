@@ -113,6 +113,7 @@ pub async fn reserve_stock_from_order(
         .await?;
 
         let cancel_event = ProductEvent {
+            tenant_id: event.tenant_id.or(Some(event.supplier_id)),
             event_type: "inventory.expired".into(),
             product_id: r.product_id,
             order_id: Some(r.order_id),
@@ -159,6 +160,7 @@ pub async fn reserve_stock_from_order(
     {
         tx.commit().await?;
         let success_event = ProductEvent {
+            tenant_id: event.tenant_id.or(Some(event.supplier_id)),
             event_type: "inventory.reserved".into(),
             product_id: product_id,
             order_id: Some(order_id),
@@ -193,6 +195,7 @@ pub async fn reserve_stock_from_order(
         tx.rollback().await?;
         // Publish REJECTED
         let reject_event = ProductEvent {
+            tenant_id: event.tenant_id.or(Some(event.supplier_id)),
             event_type: "inventory.rejected".into(),
             product_id: product_id,
             order_id: Some(order_id),
@@ -242,6 +245,7 @@ pub async fn reserve_stock_from_order(
 
     // Publish success
     let success_event = ProductEvent {
+        tenant_id: event.tenant_id.or(Some(event.supplier_id)),
         event_type: "inventory.reserved".into(),
         product_id: product_id,
         order_id: Some(order_id),
@@ -340,6 +344,7 @@ pub async fn release_stock_from_order(
 
     // publish event AFTER commit
     let release_event = ProductEvent {
+        tenant_id: event.tenant_id.or(Some(event.supplier_id)),
         event_type: "inventory.released".into(),
         product_id: product_id,
         order_id: Some(order_id),
@@ -436,6 +441,7 @@ pub async fn finalize_order_after_payment(
     let expires_at = Utc::now() + Duration::seconds(2 * 24 * 60 * 60);
 
     let finalised_event = ProductEvent {
+        tenant_id: event.tenant_id.or(Some(supplier_id)),
         event_type: "inventory.finalized".into(),
         product_id,
         order_id: Some(order_id),
@@ -450,6 +456,7 @@ pub async fn finalize_order_after_payment(
     redis_pub.publish_async("inventory.finalized", finalised_event);
 
     let updated_event = ProductEvent {
+        tenant_id: event.tenant_id.or(Some(supplier_id)),
         event_type: "inventory.updated".into(),
         product_id,
         quantity: Some(current_qty),
@@ -459,6 +466,7 @@ pub async fn finalize_order_after_payment(
 
     if current_qty <= low_stock_threshold {
         let lowstock_event = ProductEvent {
+            tenant_id: event.tenant_id.or(Some(supplier_id)),
             event_type: "inventory.lowstock".into(),
             product_id,
             quantity: Some(current_qty),
@@ -475,7 +483,6 @@ mod tests {
     use super::*;
 
     #[test]
-    #[ignore = "Requires PostgreSQL instance for sqlx::test"]
     fn test_atomic_reservation_logic() {
         // Atomic reservations check:
         // SELECT quantity, reserved FROM inventory WHERE product_id = $1 FOR UPDATE

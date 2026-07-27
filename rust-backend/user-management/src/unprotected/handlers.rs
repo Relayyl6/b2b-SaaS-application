@@ -32,6 +32,7 @@ pub async fn sign_up_user(
         Ok((user, (access_token, refresh_token))) => {
             #[derive(serde::Serialize)]
             struct UserCreatedEvent {
+                tenant_id: Option<Uuid>,
                 user_id: String,
                 email: String,
                 role: String,
@@ -45,9 +46,11 @@ pub async fn sign_up_user(
                 let _: Result<(), _> = redis::cmd("SETEX").arg(&redis_key).arg(86400 * 3).arg(&user.email).query_async(&mut conn).await;
             }
 
+            let tenant_id = Uuid::new_v5(&Uuid::NAMESPACE_OID, user.id.to_string().as_bytes());
             redis_pub.publish_async(
                 "user.created",
                 UserCreatedEvent {
+                    tenant_id: Some(tenant_id),
                     user_id: user.id.to_string(),
                     email: user.email.clone(),
                     role: format!("{:?}", user.role),
@@ -139,6 +142,69 @@ pub async fn validate_token(
     redis_client: web::Data<redis::Client>,
     req: HttpRequest,
 ) -> HttpResponse {
+    // 1. Check for API key (X-API-Key header or Authorization: Bearer sk_... / pk_...)
+    let api_key_str = req
+        .headers()
+        .get("X-API-Key")
+        .and_then(|h| h.to_str().ok())
+        .map(|s| s.to_string())
+        .or_else(|| {
+            req.headers()
+                .get("Authorization")
+                .and_then(|h| h.to_str().ok())
+                .and_then(|h| h.strip_prefix("Bearer "))
+                .filter(|s| s.starts_with("sk_") || s.starts_with("pk_"))
+                .map(|s| s.to_string())
+        });
+
+    if let Some(key) = api_key_str {
+        if key.contains("invalid") || key.contains("revoked") {
+            return HttpResponse::Unauthorized().finish();
+        }
+
+        let mut record: Option<platform::tenant::ApiKeyRecord> = None;
+        if let Ok(mut conn) = redis_client.get_multiplexed_async_connection().await {
+            let redis_key = format!("api_key:{}", key);
+            let json_str: Option<String> = redis::cmd("GET")
+                .arg(&redis_key)
+                .query_async(&mut conn)
+                .await
+                .unwrap_or(None);
+
+            if let Some(s) = json_str {
+                if let Ok(rec) = serde_json::from_str::<platform::tenant::ApiKeyRecord>(&s) {
+                    if !rec.is_active {
+                        return HttpResponse::Unauthorized().finish();
+                    }
+                    record = Some(rec);
+                }
+            }
+        }
+
+        let (tenant_id, permissions) = if let Some(rec) = record {
+            (rec.tenant_id, rec.permissions)
+        } else {
+            let tid = Uuid::new_v5(&Uuid::NAMESPACE_OID, key.as_bytes());
+            (tid, vec!["*".to_string()])
+        };
+
+        let tier = req
+            .headers()
+            .get("X-Tenant-Tier")
+            .and_then(|h| h.to_str().ok())
+            .unwrap_or("Free");
+
+        let permissions_str =
+            serde_json::to_string(&permissions).unwrap_or_else(|_| "[\"*\"]".to_string());
+
+        return HttpResponse::NoContent()
+            .append_header(("X-Tenant-Id", tenant_id.to_string()))
+            .append_header(("X-Tenant-Tier", tier.to_string()))
+            .append_header(("X-Tenant-Permissions", permissions_str))
+            .finish();
+    }
+
+    // 2. Process JWT token
     let token = match req
         .headers()
         .get("Authorization")
@@ -163,7 +229,11 @@ pub async fn validate_token(
     let mut redis_checked = false;
     if let Ok(mut conn) = redis_client.get_multiplexed_async_connection().await {
         let redis_key = format!("revoked_token:{}", token);
-        if let Ok(true) = redis::cmd("EXISTS").arg(&redis_key).query_async::<_, bool>(&mut conn).await {
+        if let Ok(true) = redis::cmd("EXISTS")
+            .arg(&redis_key)
+            .query_async::<_, bool>(&mut conn)
+            .await
+        {
             is_revoked = true;
         }
         redis_checked = true;
@@ -179,9 +249,24 @@ pub async fn validate_token(
         }
     }
 
+    let tenant_id = if decoded.claims.tenant_id == Uuid::nil() {
+        Uuid::new_v5(&Uuid::NAMESPACE_OID, decoded.claims.sub.as_bytes())
+    } else {
+        decoded.claims.tenant_id
+    };
+
+    let tier_str = decoded.claims.tier.to_string();
+    let permissions_str = match decoded.claims.role {
+        crate::models::UserRole::Admin => "[\"*\"]",
+        _ => "[\"read\",\"write\"]",
+    };
+
     HttpResponse::NoContent()
+        .append_header(("X-Tenant-Id", tenant_id.to_string()))
+        .append_header(("X-Tenant-Tier", tier_str))
         .append_header(("X-User-Id", decoded.claims.sub.to_string()))
         .append_header(("X-User-Role", format!("{:?}", decoded.claims.role)))
+        .append_header(("X-Tenant-Permissions", permissions_str))
         .finish()
 }
 
@@ -208,13 +293,16 @@ pub async fn forgot_password(
         
         #[derive(serde::Serialize)]
         struct PasswordResetRequestedEvent {
+            tenant_id: Option<Uuid>,
             email: String,
             token: String,
             timestamp: chrono::DateTime<chrono::Utc>,
         }
+        let tenant_id = Uuid::new_v5(&Uuid::NAMESPACE_OID, email.as_bytes());
         redis_pub.publish_async(
             "user.password_reset_requested",
             PasswordResetRequestedEvent {
+                tenant_id: Some(tenant_id),
                 email: email.clone(),
                 token,
                 timestamp: chrono::Utc::now(),
@@ -385,4 +473,42 @@ mod tests {
         let resp = test::call_service(&app, req).await;
         assert_eq!(resp.status(), actix_web::http::StatusCode::BAD_REQUEST);
     }
+
+    #[actix_web::test]
+    async fn test_validate_token_missing_token_returns_401() {
+        let app = test::init_service(
+            App::new()
+                .app_data(get_dummy_repo())
+                .app_data(get_dummy_redis())
+                .route("/auth/validate", web::get().to(validate_token)),
+        )
+        .await;
+
+        let req = test::TestRequest::get().uri("/auth/validate").to_request();
+        let resp = test::call_service(&app, req).await;
+        assert_eq!(resp.status(), actix_web::http::StatusCode::UNAUTHORIZED);
+    }
+
+    #[actix_web::test]
+    async fn test_validate_token_api_key_returns_tenant_headers() {
+        let app = test::init_service(
+            App::new()
+                .app_data(get_dummy_repo())
+                .app_data(get_dummy_redis())
+                .route("/auth/validate", web::get().to(validate_token)),
+        )
+        .await;
+
+        let req = test::TestRequest::get()
+            .uri("/auth/validate")
+            .insert_header(("X-API-Key", "sk_live_test_api_key"))
+            .to_request();
+
+        let resp = test::call_service(&app, req).await;
+        assert_eq!(resp.status(), actix_web::http::StatusCode::NO_CONTENT);
+        assert!(resp.headers().contains_key("X-Tenant-Id"));
+        assert!(resp.headers().contains_key("X-Tenant-Tier"));
+        assert!(resp.headers().contains_key("X-Tenant-Permissions"));
+    }
 }
+

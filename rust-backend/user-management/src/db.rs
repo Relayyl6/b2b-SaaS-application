@@ -35,7 +35,7 @@ impl UserRepo {
             r#"
                 INSERT INTO users (email, password, full_name, role)
                 VALUES ($1, $2, $3, $4)
-                RETURNING id, email, password, full_name, role, is_active, email_verified, created_at, updated_at
+                RETURNING id, tenant_id, email, password, full_name, role, is_active, email_verified, created_at, updated_at
             "#,
         )
         .bind(email)
@@ -123,7 +123,7 @@ impl UserRepo {
                 is_active = COALESCE($5, is_active),
                 updated_at = NOW()
             WHERE id = $6
-            RETURNING id, email, password, full_name, role, is_active, email_verified, created_at, updated_at
+            RETURNING id, tenant_id, email, password, full_name, role, is_active, email_verified, created_at, updated_at
             "#,
         )
         .bind(new_email)

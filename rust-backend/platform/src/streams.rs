@@ -4,6 +4,7 @@ use serde::de::DeserializeOwned;
 use serde::Serialize;
 use std::collections::HashMap;
 use std::time::Duration;
+use uuid::Uuid;
 
 #[derive(Clone)]
 pub struct StreamPublisher {
@@ -16,6 +17,7 @@ pub struct StreamEnvelope<T> {
     pub stream: String,
     pub id: String,
     pub event_type: String,
+    pub tenant_id: Option<Uuid>,
     pub payload: T,
 }
 
@@ -46,7 +48,13 @@ impl StreamPublisher {
         }
 
         let stream = stream_for_event(event_type);
-        let payload = serde_json::to_string(message)?;
+        let payload_val = serde_json::to_value(message)?;
+        let tenant_str = payload_val
+            .get("tenant_id")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        let payload = serde_json::to_string(&payload_val)?;
 
         let Some(pool) = &self.pool else {
             return Ok("noop".to_string());
@@ -58,6 +66,8 @@ impl StreamPublisher {
             .arg("*")
             .arg("event_type")
             .arg(event_type)
+            .arg("tenant_id")
+            .arg(&tenant_str)
             .arg("payload")
             .arg(payload)
             .query_async(&mut *conn)
@@ -80,12 +90,20 @@ impl StreamPublisher {
             tracing::warn!(%event_type, error = %error_str, "redis stream publish failed, routing to DLQ");
             if let Some(pool) = &this.pool {
                 if let Ok(mut conn) = pool.get().await {
+                    let payload_val = serde_json::to_value(&message).unwrap_or_default();
+                    let tenant_str = payload_val
+                        .get("tenant_id")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string();
                     let payload = serde_json::to_string(&message).unwrap_or_default();
                     let _: Result<(), _> = redis::cmd("XADD")
                         .arg("stream:dlq")
                         .arg("*")
                         .arg("event_type")
                         .arg(&event_type)
+                        .arg("tenant_id")
+                        .arg(&tenant_str)
                         .arg("payload")
                         .arg(payload)
                         .arg("error")
@@ -239,15 +257,25 @@ fn parse_stream_reply<T: DeserializeOwned>(
             let Some(payload) = map.get("payload") else {
                 continue;
             };
-            let Ok(payload) = serde_json::from_str::<T>(payload) else {
+            let Ok(payload_obj) = serde_json::from_str::<T>(payload) else {
                 continue;
             };
+
+            let tenant_id = map
+                .get("tenant_id")
+                .filter(|s| !s.is_empty())
+                .and_then(|s| Uuid::parse_str(s).ok())
+                .or_else(|| {
+                    let val: serde_json::Value = serde_json::from_str(payload).ok()?;
+                    val.get("tenant_id")?.as_str()?.parse::<Uuid>().ok()
+                });
 
             output.push(StreamEnvelope {
                 stream: stream.clone(),
                 id,
                 event_type,
-                payload,
+                tenant_id,
+                payload: payload_obj,
             });
         }
     }
@@ -330,16 +358,12 @@ mod tests {
 
     #[test]
     fn test_parse_stream_reply() {
-        // Construct a mock redis value for stream reply
-        // [
-        //   [ "stream:orders", [
-        //       [ "123-0", ["event_type", "order.created", "payload", "{\"value\":42}"] ]
-        //     ]
-        //   ]
-        // ]
+        let tenant_uuid = Uuid::new_v4();
         let message_fields = redis::Value::Bulk(vec![
             redis::Value::Data(b"event_type".to_vec()),
             redis::Value::Data(b"order.created".to_vec()),
+            redis::Value::Data(b"tenant_id".to_vec()),
+            redis::Value::Data(tenant_uuid.to_string().into_bytes()),
             redis::Value::Data(b"payload".to_vec()),
             redis::Value::Data(b"{\"value\":42}".to_vec()),
         ]);
@@ -362,6 +386,7 @@ mod tests {
         assert_eq!(events[0].stream, "stream:orders");
         assert_eq!(events[0].id, "123-0");
         assert_eq!(events[0].event_type, "order.created");
+        assert_eq!(events[0].tenant_id, Some(tenant_uuid));
         assert_eq!(events[0].payload.value, 42);
     }
 }

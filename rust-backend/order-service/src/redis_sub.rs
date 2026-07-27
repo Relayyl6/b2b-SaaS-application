@@ -46,6 +46,28 @@ pub async fn listen_to_redis_events(pool: PgPool) -> Result<(), Box<dyn std::err
             let redis_pub = redis_pub.clone();
             async move {
                 let event_type = envelope.event_type.clone();
+
+                let payload_tenant_id = envelope
+                    .payload
+                    .get("tenant_id")
+                    .and_then(|v| v.as_str())
+                    .and_then(|s| uuid::Uuid::parse_str(s).ok());
+                let tenant_id = envelope.tenant_id.or(payload_tenant_id);
+
+                if tenant_id.is_none() || tenant_id == Some(uuid::Uuid::nil()) {
+                    tracing::warn!(%event_type, stream = %envelope.stream, "Missing tenant_id in stream event — skipping business logic");
+                    metrics::inc_event("order-service", &envelope.stream, &event_type, "tenant_mismatch");
+                    return Ok(());
+                }
+
+                if let (Some(env_tid), Some(pay_tid)) = (envelope.tenant_id, payload_tenant_id) {
+                    if env_tid != pay_tid {
+                        tracing::warn!(%event_type, ?env_tid, ?pay_tid, "Tenant ID mismatch between envelope and payload — skipping business logic");
+                        metrics::inc_event("order-service", &envelope.stream, &event_type, "tenant_mismatch");
+                        return Ok(());
+                    }
+                }
+
                 let result = handle_event(&pool, &redis_pub, &event_type, envelope.payload).await;
                 metrics::inc_event(
                     "order-service",

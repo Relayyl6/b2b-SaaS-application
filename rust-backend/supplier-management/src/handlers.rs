@@ -71,6 +71,7 @@ fn publish_supplier_event(publisher: &StreamPublisher, event_type: &str, supplie
     publisher.publish_async(
         event_type,
         SupplierEvent {
+            tenant_id: Some(supplier.id),
             event_type: event_type.to_string(),
             supplier_id: supplier.id,
             user_id: supplier.owner_user_id,

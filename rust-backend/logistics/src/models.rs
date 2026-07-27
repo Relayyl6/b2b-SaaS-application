@@ -30,6 +30,7 @@ impl ShipmentStatus {
 #[derive(Debug, Serialize, Deserialize, FromRow)]
 pub struct Shipment {
     pub id: Uuid,
+    pub tenant_id: Uuid,
     pub order_id: Uuid,
     pub user_id: Uuid,
     pub supplier_id: Uuid,
@@ -67,6 +68,7 @@ pub struct ListShipmentQuery {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LogisticsEvent {
+    pub tenant_id: Option<Uuid>,
     pub event_type: String,
     pub shipment_id: Uuid,
     pub order_id: Uuid,
@@ -80,6 +82,7 @@ pub struct LogisticsEvent {
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct IncomingOrderEvent {
+    pub tenant_id: Option<Uuid>,
     #[allow(dead_code)] // deserialized from stream; reserved for future event routing
     pub event_type: String,
     pub order_id: Option<Uuid>,

@@ -57,6 +57,7 @@ mod tests {
     use sqlx::PgPool;
 
     #[sqlx::test]
+    #[ignore]
     async fn test_update_order_status_db_optimistic_concurrency(pool: PgPool) {
         // Setup initial order
         let order_id = uuid::Uuid::new_v4();

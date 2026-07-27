@@ -39,13 +39,20 @@ impl RabbitPublisher {
         let future = async {
             let payload = serde_json::to_vec(event)
                 .map_err(|e| lapin::Error::from(std::io::Error::other(e.to_string())))?;
+            let mut headers = FieldTable::default();
+            if let Some(tenant_id) = event.tenant_id {
+                headers.insert(
+                    "x-tenant-id".into(),
+                    lapin::types::AMQPValue::LongString(tenant_id.to_string().into()),
+                );
+            }
             let confirm = self.channel
                 .basic_publish(
                     "analytics_events_topic",
                     &event.event_type,
                     BasicPublishOptions::default(),
                     &payload,
-                    BasicProperties::default().with_delivery_mode(2),
+                    BasicProperties::default().with_delivery_mode(2).with_headers(headers),
                 )
                 .await?;
             confirm.await?;

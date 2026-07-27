@@ -11,6 +11,7 @@ mod tests {
 
         let ev = AnalyticsEvent {
             event_type: "order.created".to_string(),
+            tenant_id: None,
             order_id: Some(expected_id),
             product_id: None,
             supplier_id: None,
@@ -38,6 +39,7 @@ mod tests {
 
         let ev = AnalyticsEvent {
             event_type: "product.updated".to_string(),
+            tenant_id: None,
             product_id: Some(expected_id),
             order_id: None,
             supplier_id: None,
@@ -63,6 +65,7 @@ mod tests {
     fn test_unknown_event_generates_new_id() {
         let ev = AnalyticsEvent {
             event_type: "random.event".to_string(),
+            tenant_id: None,
             order_id: None,
             product_id: None,
             supplier_id: None,
@@ -92,6 +95,7 @@ mod tests {
     fn test_event_new_serializes_data() {
         let ev = AnalyticsEvent {
             event_type: "user.logged_in".to_string(),
+            tenant_id: None,
             user_id: Some(Uuid::new_v4()),
             order_id: None,
             product_id: None,

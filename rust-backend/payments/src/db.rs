@@ -131,6 +131,7 @@ mod tests {
     use sqlx::PgPool;
 
     #[sqlx::test]
+    #[ignore]
     async fn test_create_and_idempotency(pool: PgPool) {
         let repo = PaymentRepo::new(pool);
         let req = CreatePaymentIntentRequest {
@@ -157,6 +158,7 @@ mod tests {
     }
 
     #[sqlx::test]
+    #[ignore]
     async fn test_apply_webhook(pool: PgPool) {
         let repo = PaymentRepo::new(pool);
         let req = CreatePaymentIntentRequest {

@@ -54,7 +54,7 @@ pub async fn run_redis_consumer(
             let redis_client = redis_client.clone();
             async move {
                 let event_type = envelope.event_type.clone();
-                let analytics_event: AnalyticsEvent = match serde_json::from_value(envelope.payload)
+                let mut analytics_event: AnalyticsEvent = match serde_json::from_value(envelope.payload)
                 {
                     Ok(ev) => ev,
                     Err(e) => {
@@ -62,6 +62,16 @@ pub async fn run_redis_consumer(
                         return Ok(());
                     }
                 };
+
+                let tenant_id = envelope.tenant_id.or(analytics_event.tenant_id);
+                if tenant_id.is_none() || tenant_id == Some(uuid::Uuid::nil()) {
+                    warn!(%event_type, stream = %envelope.stream, "Missing tenant_id in analytics stream event — skipping event ingestion");
+                    return Ok(());
+                }
+
+                if analytics_event.tenant_id.is_none() {
+                    analytics_event.tenant_id = tenant_id;
+                }
 
                 let event = match Event::new(analytics_event) {
                     Ok(ev) => ev,

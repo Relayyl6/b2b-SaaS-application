@@ -36,13 +36,23 @@ pub async fn publish_example_event(ev: Event) -> Result<(), PublishError> {
 
     let payload = serde_json::to_vec(&ev)?;
 
+    let mut headers = FieldTable::default();
+    if let Some(tenant_id) = ev.data.get("tenant_id").and_then(|v| v.as_str()) {
+        headers.insert(
+            "x-tenant-id".into(),
+            lapin::types::AMQPValue::LongString(tenant_id.into()),
+        );
+    }
+
     channel
         .basic_publish(
             exchange_name,
             &routing_key,
             BasicPublishOptions::default(),
             &payload,
-            BasicProperties::default().with_delivery_mode(2), // persistent
+            BasicProperties::default()
+                .with_delivery_mode(2)
+                .with_headers(headers), // persistent
         )
         .await?
         .await?; // wait for confirm

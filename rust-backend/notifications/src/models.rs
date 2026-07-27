@@ -37,6 +37,7 @@ pub enum NotificationPriority {
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
 pub struct Notification {
     pub id: Uuid,
+    pub tenant_id: Uuid,
     pub user_id: Option<Uuid>,
     pub supplier_id: Option<Uuid>,
     pub order_id: Option<Uuid>,
@@ -82,6 +83,7 @@ pub struct ListNotificationsQuery {
 #[allow(dead_code)]
 #[derive(Debug, Clone, Deserialize)]
 pub struct DomainEvent {
+    pub tenant_id: Option<Uuid>,
     pub event_type: Option<String>,
     pub user_id: Option<Uuid>,
     pub supplier_id: Option<Uuid>,
@@ -107,6 +109,7 @@ pub enum DevicePlatform {
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
 pub struct NotificationDevice {
     pub id: Uuid,
+    pub tenant_id: Uuid,
     pub user_id: Uuid,
     pub platform: DevicePlatform,
     pub push_token: String,
@@ -132,6 +135,7 @@ pub struct RegisterDeviceRequest {
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
 pub struct UserPreference {
     pub user_id: Uuid,
+    pub tenant_id: Uuid,
     pub email_enabled: bool,
     pub sms_enabled: bool,
     pub push_enabled: bool,

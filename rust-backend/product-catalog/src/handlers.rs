@@ -24,6 +24,7 @@ pub async fn create_product(
     match repo.create_product(&req).await {
         Ok(product) => {
             let event = ProductEvent {
+                tenant_id: Some(product.supplier_id),
                 event_type: "product.created".to_string(),
                 product_id: product.product_id,
                 supplier_id: product.supplier_id,
@@ -79,6 +80,7 @@ pub async fn get_products_for_supplier(
         Ok(items) => {
             for item in &items {
                 let event = ProductEvent {
+                    tenant_id: Some(item.supplier_id),
                     event_type: "product.viewed".to_string(),
                     product_id: item.product_id,
                     supplier_id: item.supplier_id,
@@ -148,6 +150,7 @@ pub async fn update_product(
     {
         Ok(p) => {
             let event = ProductEvent {
+                tenant_id: Some(p.supplier_id),
                 event_type: "product.updated".to_string(),
                 product_id: p.product_id,
                 supplier_id: p.supplier_id,
@@ -190,6 +193,7 @@ pub async fn delete_product(
     match repo.delete_product(supplier_id, product_id).await {
         Ok(rows) if rows > 0 => {
             let event = json!({
+                "tenant_id": supplier_id,
                 "event_type": "product.deleted",
                 "product_id": product_id,
                 "supplier_id": supplier_id,
@@ -308,6 +312,7 @@ pub async fn bulk_create(
         Ok(created) => {
             for p in &created {
                 let event = ProductEvent {
+                    tenant_id: Some(p.supplier_id),
                     event_type: "product.created".to_string(),
                     product_id: p.product_id,
                     supplier_id: p.supplier_id,
@@ -449,7 +454,7 @@ mod tests {
         let req_json = web::Json(req_data);
 
         let response = sign_cloudinary_upload(storage_data.clone(), req_json).await;
-        let resp = response.respond_to(&actix_web::HttpRequest::default());
+        let resp = response.respond_to(&actix_web::test::TestRequest::default().to_http_request());
         assert_eq!(resp.status(), StatusCode::OK);
     }
 
@@ -465,7 +470,7 @@ mod tests {
         let req_json = web::Json(req_data);
 
         let response = sign_cloudinary_upload(storage_data.clone(), req_json).await;
-        let resp = response.respond_to(&actix_web::HttpRequest::default());
+        let resp = response.respond_to(&actix_web::test::TestRequest::default().to_http_request());
         assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
     }
 
@@ -481,7 +486,7 @@ mod tests {
         let req_json = web::Json(req_data);
 
         let response = sign_cloudinary_upload(storage_data.clone(), req_json).await;
-        let resp = response.respond_to(&actix_web::HttpRequest::default());
+        let resp = response.respond_to(&actix_web::test::TestRequest::default().to_http_request());
         assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
     }
 }

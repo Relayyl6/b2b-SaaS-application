@@ -130,7 +130,19 @@ impl RabbitConsumer {
                 })
                 .unwrap_or(3);
 
-            let analytics_event: Event = match serde_json::from_slice(&delivery.data) {
+            // Extract x-tenant-id from headers
+            let tenant_id_header = delivery
+                .properties
+                .headers()
+                .as_ref()
+                .and_then(|h| h.inner().get("x-tenant-id"))
+                .and_then(|v| match v {
+                    AMQPValue::LongString(s) => std::str::from_utf8(s.as_bytes()).ok().map(|s| s.to_string()),
+                    AMQPValue::ShortString(s) => Some(s.to_string()),
+                    _ => None,
+                });
+
+            let mut analytics_event: Event = match serde_json::from_slice(&delivery.data) {
                 Ok(ev) => match Event::new(ev) {
                     Ok(ev) => ev,
                     Err(err) => {
@@ -151,6 +163,12 @@ impl RabbitConsumer {
                     continue;
                 }
             };
+
+            if let Some(ref tid) = tenant_id_header {
+                if analytics_event.data.get("tenant_id").is_none() || analytics_event.data["tenant_id"].is_null() {
+                    analytics_event.data["tenant_id"] = serde_json::Value::String(tid.clone());
+                }
+            }
 
             // process event
             let db_res = insert_event(&pool, &analytics_event).await;

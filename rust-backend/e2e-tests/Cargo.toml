@@ -13,3 +13,59 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 uuid = { workspace = true }
 futures-util = { workspace = true }
+sqlx = { workspace = true }
+reqwest = { workspace = true }
+jsonwebtoken = { workspace = true }
+chrono = { workspace = true }
+hmac = { workspace = true }
+sha2 = { workspace = true }
+hex = { workspace = true }
+actix-web = { workspace = true }
+
+[[test]]
+name = "event_mesh_test"
+path = "tests/event_mesh_test.rs"
+
+[[test]]
+name = "gateway_auth_tests"
+path = "tests/tier1_feature_coverage/gateway_auth_tests.rs"
+
+[[test]]
+name = "db_isolation_tests"
+path = "tests/tier1_feature_coverage/db_isolation_tests.rs"
+
+[[test]]
+name = "event_isolation_tests"
+path = "tests/tier1_feature_coverage/event_isolation_tests.rs"
+
+[[test]]
+name = "gateway_auth_boundary_tests"
+path = "tests/tier2_boundary_cases/gateway_auth_boundary_tests.rs"
+
+[[test]]
+name = "db_isolation_boundary_tests"
+path = "tests/tier2_boundary_cases/db_isolation_boundary_tests.rs"
+
+[[test]]
+name = "event_isolation_boundary_tests"
+path = "tests/tier2_boundary_cases/event_isolation_boundary_tests.rs"
+
+[[test]]
+name = "auth_db_interaction_tests"
+path = "tests/tier3_cross_feature/auth_db_interaction_tests.rs"
+
+[[test]]
+name = "auth_event_interaction_tests"
+path = "tests/tier3_cross_feature/auth_event_interaction_tests.rs"
+
+[[test]]
+name = "db_event_interaction_tests"
+path = "tests/tier3_cross_feature/db_event_interaction_tests.rs"
+
+[[test]]
+name = "multi_tenant_lifecycle_tests"
+path = "tests/tier4_real_world/multi_tenant_lifecycle_tests.rs"
+
+[[test]]
+name = "security_audit_attack_tests"
+path = "tests/tier4_real_world/security_audit_attack_tests.rs"

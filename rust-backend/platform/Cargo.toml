@@ -6,8 +6,10 @@ license.workspace = true
 
 [dependencies]
 actix-web.workspace = true
+chrono = { workspace = true, features = ["serde", "clock"] }
 deadpool-redis = "0.15"
 futures-util.workspace = true
+jsonwebtoken.workspace = true
 opentelemetry.workspace = true
 opentelemetry-otlp.workspace = true
 opentelemetry_sdk.workspace = true
@@ -20,3 +22,7 @@ tokio = { workspace = true, features = ["time"] }
 tracing.workspace = true
 tracing-opentelemetry.workspace = true
 tracing-subscriber.workspace = true
+uuid = { workspace = true, features = ["v4", "v5", "serde"] }
+sqlx = { workspace = true, features = ["runtime-tokio-native-tls", "postgres", "uuid", "chrono"] }
+
+

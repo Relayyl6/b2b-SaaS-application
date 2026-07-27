@@ -23,6 +23,7 @@ const EVENTS: &[&str] = &[
     "order.created",
     "order.cancelled",
     "order.failed",
+    "inventory.release_command",
     "payment.success",
     "payment.failed",
     "payment.cancelled",
@@ -48,12 +49,28 @@ pub async fn listen_to_redis_events(
             async move {
                 let event_type = envelope.event_type.clone();
                 let event = envelope.payload;
+
+                let tenant_id = envelope.tenant_id.or(event.tenant_id);
+                if tenant_id.is_none() || tenant_id == Some(uuid::Uuid::nil()) {
+                    tracing::warn!(%event_type, stream = %envelope.stream, "Missing tenant_id in stream event — skipping business logic");
+                    metrics::inc_event("inventory-management", &envelope.stream, &event_type, "tenant_mismatch");
+                    return Ok(());
+                }
+
+                if let (Some(env_tid), Some(pay_tid)) = (envelope.tenant_id, event.tenant_id) {
+                    if env_tid != pay_tid {
+                        tracing::warn!(%event_type, ?env_tid, ?pay_tid, "Tenant ID mismatch between stream envelope and payload — skipping business logic");
+                        metrics::inc_event("inventory-management", &envelope.stream, &event_type, "tenant_mismatch");
+                        return Ok(());
+                    }
+                }
+
                 let result: Result<(), Box<dyn std::error::Error + Send + Sync>> = match event_type.as_str() {
                     "product.created" => create_product_from_event(&pool, event).await,
                     "product.updated" => update_product_from_event(&pool, event).await,
                     "product.deleted" => delete_product_from_event(&pool, event).await,
                     "order.created" => reserve_stock_from_order(&pool, redis_pub, event).await,
-                    "order.cancelled" | "order.failed" => {
+                    "order.cancelled" | "order.failed" | "inventory.release_command" => {
                         release_stock_from_order(&pool, redis_pub, event).await
                     }
                     "payment.success" => {

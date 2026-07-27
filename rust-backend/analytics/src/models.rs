@@ -9,6 +9,7 @@ use uuid::Uuid;
 // =============================
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct AnalyticsEvent {
+    pub tenant_id: Option<Uuid>,
     pub event_type: String,
 
     pub product_id: Option<Uuid>,

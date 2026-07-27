@@ -19,6 +19,7 @@ pub enum PaymentStatus {
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
 pub struct PaymentIntent {
     pub id: Uuid,
+    pub tenant_id: Uuid,
     pub idempotency_key: String,
     pub order_id: Uuid,
     pub user_id: Uuid,
@@ -35,7 +36,7 @@ pub struct PaymentIntent {
     pub updated_at: DateTime<Utc>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CreatePaymentIntentRequest {
     pub idempotency_key: String,
     pub order_id: Uuid,
@@ -57,8 +58,9 @@ pub struct PaymentWebhook {
     pub metadata: Option<Value>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PaymentEvent {
+    pub tenant_id: Option<Uuid>,
     pub event_type: String,
     pub payment_id: Uuid,
     pub order_id: Uuid,

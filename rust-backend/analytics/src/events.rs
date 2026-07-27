@@ -120,6 +120,7 @@ mod tests {
     fn test_extract_primary_id() {
         let mut ev = AnalyticsEvent {
             event_type: "order.created".to_string(),
+            tenant_id: None,
             order_id: Some(Uuid::new_v4()),
             product_id: None,
             supplier_id: None,

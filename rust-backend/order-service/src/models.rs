@@ -7,6 +7,7 @@ use uuid::Uuid;
 #[derive(Serialize, Deserialize, Debug, FromRow)]
 pub struct Order {
     pub id: Uuid,
+    pub tenant_id: Uuid,
     pub product_id: Uuid,
     pub user_id: Uuid,
     pub supplier_id: Uuid,
@@ -16,11 +17,23 @@ pub struct Order {
     pub updated_at: Option<DateTime<Utc>>,
     pub expires_at: DateTime<Utc>,
     pub order_timestamp: DateTime<Utc>,
+    pub deleted_at: Option<DateTime<Utc>>,
     pub version: i32,
 }
 
+#[derive(Serialize, Deserialize, Debug, FromRow)]
+pub struct OrderAuditLog {
+    pub id: Uuid,
+    pub tenant_id: Uuid,
+    pub order_id: Uuid,
+    pub previous_status: Option<String>,
+    pub new_status: String,
+    pub changed_at: DateTime<Utc>,
+    pub metadata: Option<serde_json::Value>,
+}
+
 // items is basically the name of whatever you ordered
-#[derive(Deserialize)]
+#[derive(Serialize, Deserialize)]
 pub struct CreateOrderRequest {
     pub user_id: Uuid,
     pub supplier_id: Uuid,
@@ -44,6 +57,7 @@ pub struct UpdateOrderStatus {
 
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::Type, PartialEq, Eq)]
 #[sqlx(type_name = "order_status", rename_all = "lowercase")]
+#[serde(rename_all = "lowercase")]
 pub enum OrderStatus {
     Pending,
     Processing,
@@ -58,6 +72,7 @@ pub enum OrderStatus {
 #[derive(Clone, Debug, Serialize, Deserialize, Default)]
 #[serde(default)]
 pub struct OrderEvent {
+    pub tenant_id: Option<Uuid>,
     pub event_type: String,
     pub product_id: Uuid,
     pub supplier_id: Uuid,
@@ -77,7 +92,11 @@ pub struct OrderEvent {
     pub order_timestamp: Option<DateTime<Utc>>,
     pub expires_at: DateTime<Utc>,
     pub user_id: Option<Uuid>,
-    // pub status: OrderStatus,
+    pub status: Option<OrderStatus>,
+    
+    // Command routing fields
+    pub notification_channel: Option<String>,
+    pub refund_amount: Option<f64>,
 }
 
 #[cfg(test)]
