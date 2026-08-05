@@ -121,6 +121,195 @@ flowchart LR
 
 ---
 
+### 🔒 Multi-Tenant Row-Level Security (RLS) & Dynamic Database Pool Routing
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant Client as Client Application / API
+    participant Gateway as Nginx API Gateway
+    participant Middleware as TenantAuthMiddleware (Actix)
+    participant Router as DynamicPoolRouter (Platform)
+    participant DB as PostgreSQL (Multi-Tenant DB)
+
+    Client->>Gateway: HTTP Request + Bearer JWT / X-API-Key + X-Tenant-Id
+    Gateway->>Middleware: Forward Request with Headers
+    Middleware->>Middleware: Verify JWT Claims / Redis Token Cache
+    Middleware->>Middleware: Construct TenantContext (tenant_id, tier, user_id)
+    Middleware->>Router: Request Connection Pool for TenantContext
+    alt Shared Pool (Free/Pro Tiers)
+        Router-->>Middleware: Return Shared Pool Handle
+    else Isolated Pool (Enterprise Tier)
+        Router->>Router: Lookup Dedicated Connection String
+        Router-->>Middleware: Return Dedicated Pool Handle
+    end
+    Middleware->>DB: Begin Transaction (pool.begin())
+    Middleware->>DB: SET LOCAL app.current_tenant_id = 'tenant-uuid'
+    DB-->>Middleware: RLS Context Active for Transaction Scope
+    Middleware->>DB: Execute Business Query (SELECT / INSERT / UPDATE)
+    Note over DB: Postgres RLS Policy restricts visible rows<br/>WHERE tenant_id = current_setting('app.current_tenant_id')
+    DB-->>Client: Return Tenant-Isolated Query Response
+```
+
+---
+
+### 🔄 Distributed B2B Order Lifecycle & Saga Choreography
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant Client as Buyer / API Client
+    participant Order as order-service
+    participant Redis as Redis Streams Bus
+    participant Inventory as inventory-management
+    participant Payment as payments
+    participant Logistics as logistics
+    participant Notify as notifications
+
+    Client->>Order: POST /api/v1/orders (Create Order)
+    Order->>Order: Save Order (Status: Pending)
+    Order->>Redis: Publish "order.created"
+
+    par Stock Reservation
+        Redis->>Inventory: Consume "order.created"
+        alt Stock Available
+            Inventory->>Inventory: Reserve Stock Quantity (Temporary Hold)
+            Inventory->>Redis: Publish "inventory.reserved"
+            Redis->>Order: Consume "inventory.reserved"
+            Order->>Order: Update Status -> Confirmed
+        else Out of Stock
+            Inventory->>Redis: Publish "inventory.rejected"
+            Redis->>Order: Consume "inventory.rejected"
+            Order->>Order: Update Status -> Cancelled
+        end
+    end
+
+    Client->>Payment: POST /payments/intents (Initiate Payment)
+    Payment->>Payment: Save Payment Intent (RequiresPaymentMethod)
+    Payment-->>Client: Return Client Secret / Payment URL
+    Client->>Payment: Complete Checkout (Stripe Webhook)
+    Payment->>Payment: Update Payment Intent (Status: Succeeded)
+    Payment->>Redis: Publish "payment.success"
+
+    par Finalization & Dispatch
+        Redis->>Inventory: Consume "payment.success"
+        Inventory->>Inventory: Commit Stock Reservation (Finalized)
+        Inventory->>Redis: Publish "inventory.finalized"
+
+        Redis->>Logistics: Consume "inventory.finalized"
+        Logistics->>Logistics: Create Shipment & Generate Tracking Code
+        Logistics->>Redis: Publish "logistics.shipment_created"
+
+        Redis->>Notify: Consume "logistics.shipment_created"
+        Notify->>Notify: Queue Outbox Push & Email Notification
+    end
+```
+
+---
+
+### 📈 TimescaleDB Analytics Engine & RabbitMQ Event Ingestion Pipeline
+
+```mermaid
+flowchart TD
+    subgraph Microservices ["Microservice Event Sources"]
+        Catalog["product-catalog"]
+        Order["order-service"]
+        Logistics["logistics"]
+        Payment["payments"]
+    end
+
+    subgraph RabbitMQ ["RabbitMQ Message Exchange"]
+        Exchange["Exchange: analytics (Topic)"]
+        Queue["Queue: analytics_events_q"]
+        Exchange -->|"analytics.#"| Queue
+    end
+
+    subgraph AnalyticsSvc ["analytics Microservice (:3007)"]
+        Worker["RabbitMQ Consumer Worker"]
+        Parser["Event Normalizer & Mapper"]
+        SQLBuilder["Dynamic SQL Query Builder"]
+        RestAPI["Actix Analytics REST API"]
+    end
+
+    subgraph Timescale ["TimescaleDB Analytics Storage"]
+        Hypertables["analytics Hypertables<br/>- analytics.orders_daily<br/>- analytics.revenue_daily<br/>- analytics.product_views_daily<br/>- analytics.inventory_daily<br/>- analytics.delivery_performance_daily<br/>- analytics.payments_daily<br/>- analytics.top_products_7d"]
+    end
+
+    Microservices -->|"Publish JSON Event Firehose"| Exchange
+    Queue -->|"Consume Batch"| Worker
+    Worker --> Parser
+    Parser -->|"Upsert & Aggregate Rows"| Hypertables
+
+    Dashboard["Dashboard / Reporting Client"] -->|"GET /analytics?metric=revenue&window=30d"| RestAPI
+    RestAPI --> SQLBuilder
+    SQLBuilder -->|"Execute Filtered SQL Query"| Hypertables
+    Hypertables -->> RestAPI: Aggregated TimescaleDB Result Set
+    RestAPI -->> Dashboard: JSON Analytics Summary Response
+```
+
+---
+
+### ✉️ Multi-Channel Outbox Notification Delivery & DLQ Retry Workflow
+
+```mermaid
+flowchart TD
+    DomainEvent["Incoming Domain Event<br/>(order.created / payment.success / shipment.updated)"] --> PreferenceCheck{"User Preferences Check<br/>Email / SMS / Push Enabled?"}
+
+    PreferenceCheck -->|No| OptOut["Opt-Out Skipped<br/>(Record Logged)"]
+    PreferenceCheck -->|Yes| Outbox["Insert into Postgres notification_outbox<br/>(Status: Pending)"]
+
+    subgraph OutboxWorker ["Durable Outbox Delivery Worker"]
+        Outbox --> Dispatcher["Delivery Worker Polling Loop"]
+        Dispatcher --> ChannelRouter{"Determine Channel"}
+
+        ChannelRouter -->|Email| SendGrid["SendGrid / SMTP Gateway"]
+        ChannelRouter -->|SMS| Twilio["Twilio / SMS Gateway"]
+        ChannelRouter -->|Push| FCM["Firebase Cloud Messaging (FCM)"]
+        ChannelRouter -->|InApp| InAppDB["Postgres In-App Notifications"]
+    end
+
+    SendGrid --> DeliveryResult{"Dispatch Succeeded?"}
+    Twilio --> DeliveryResult
+    FCM --> DeliveryResult
+    InAppDB --> DeliveryResult
+
+    DeliveryResult -->|Yes| Success["Update Status: Sent<br/>Set sent_at = Utc::now()"]
+    DeliveryResult -->|No| RetryPolicy{"attempts < 5?"}
+
+    RetryPolicy -->|Yes| Backoff["Increment attempts<br/>Apply Exponential Backoff<br/>Schedule Retry"] --> Dispatcher
+    RetryPolicy -->|No| DLQ["Publish to Dead Letter Queue (DLQ)<br/>Status: Failed — Requires Manual Review"]
+```
+
+---
+
+### 🔑 SaaS Tenant Provisioning & API Key Security Architecture
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant TenantAdmin as SaaS Admin / Developer
+    participant ControlSvc as tenant-management (:3000)
+    participant ControlDB as Control-Plane DB (commerce_control)
+    participant AuthEngine as Key Generator & Hasher
+
+    TenantAdmin->>ControlSvc: POST /v1/tenants (Name, Email, Tier)
+    ControlSvc->>ControlDB: INSERT INTO tenants (name, email, tier)
+    ControlDB-->>ControlSvc: Return Tenant UUID (tenant_id)
+    ControlSvc-->>TenantAdmin: 201 Created (Tenant Profile)
+
+    TenantAdmin->>ControlSvc: POST /v1/tenants/keys (tenant_id, key_type: "sk", environment: "live")
+    ControlSvc->>AuthEngine: generate_api_key("sk", "live")
+    Note over AuthEngine: Generate 32-byte Cryptographic Random Key<br/>Format: sk_live_58ByteBase58String<br/>Prefix stored: first 8 chars only
+    AuthEngine->>AuthEngine: SHA-256 hash of full plaintext key
+    AuthEngine-->>ControlSvc: Return Plaintext Key + Prefix + Hash
+    ControlSvc->>ControlDB: INSERT INTO api_keys (tenant_id, key_prefix, key_hash, scopes)
+    Note over ControlDB: ONLY prefix and SHA-256 hash stored.<br/>Plaintext key is NEVER persisted.
+    ControlDB-->>ControlSvc: Key Record Persisted
+    ControlSvc-->>TenantAdmin: 201 Created — Plaintext key returned ONCE only
+```
+
+---
+
 ### 💳 Payment Intent State Machine
 ```mermaid
 stateDiagram-v2
