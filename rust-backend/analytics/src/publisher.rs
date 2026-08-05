@@ -6,6 +6,7 @@ use thiserror::Error;
 use tracing::info;
 
 #[derive(Error, Debug)]
+#[allow(dead_code)]
 pub enum PublishError {
     #[error("json serialisation error: {0}")]
     Json(#[from] serde_json::Error),
@@ -14,6 +15,7 @@ pub enum PublishError {
     Rabbit(#[from] lapin::Error),
 }
 
+#[allow(dead_code)]
 pub async fn publish_example_event(ev: Event) -> Result<(), PublishError> {
     dotenv().ok();
     let amqp_addr =

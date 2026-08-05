@@ -121,6 +121,229 @@ flowchart LR
 
 ---
 
+### 💳 Payment Intent State Machine
+```mermaid
+stateDiagram-v2
+    [*] --> RequiresPaymentMethod : POST /payments/intents
+    RequiresPaymentMethod --> Processing : Provider confirms payment method
+    Processing --> Succeeded : payment.success webhook
+    Processing --> Failed : payment.failed webhook
+    Processing --> Cancelled : POST /payments/intents/{id}/cancel
+    Succeeded --> Refunded : POST /payments/intents/{id}/refund
+    Failed --> [*]
+    Cancelled --> [*]
+    Refunded --> [*]
+    Succeeded --> Transferred : POST /payments/intents/{id}/transfer
+    Transferred --> [*]
+
+    note right of Processing
+        Idempotency-Key enforced
+        Stripe Webhook Signature verified
+        Redis Stream: payment.initiated
+    end note
+    note right of Succeeded
+        Redis Stream: payment.success
+        Triggers: inventory finalization
+        Triggers: logistics shipment creation
+    end note
+```
+
+---
+
+### 📦 Order Lifecycle State Machine
+```mermaid
+stateDiagram-v2
+    [*] --> Pending : POST /api/v1/orders
+    Pending --> Confirmed : inventory.reserved consumed
+    Pending --> Cancelled : inventory.rejected consumed
+    Confirmed --> Processing : payment.success consumed
+    Processing --> Shipped : logistics.shipment_created consumed
+    Shipped --> Delivered : logistics.shipment_updated (Delivered)
+    Processing --> Failed : payment.failed consumed
+    Confirmed --> Cancelled : POST /api/v1/orders/{id}/cancel
+    Failed --> [*]
+    Delivered --> [*]
+    Cancelled --> [*]
+
+    note right of Pending
+        Emits: order.created to Redis
+        Triggers inventory reservation
+    end note
+    note right of Cancelled
+        Emits: inventory.release_command
+        Emits: payment.refund_command
+    end note
+```
+
+---
+
+### 🚚 Shipment Delivery State Machine
+```mermaid
+stateDiagram-v2
+    [*] --> Pending : inventory.finalized consumed
+    Pending --> PickedUp : Carrier integration
+    PickedUp --> InTransit : Carrier update
+    InTransit --> OutForDelivery : Last-mile update
+    OutForDelivery --> Delivered : Delivery confirmed
+    OutForDelivery --> Failed : Delivery attempt failed
+    Failed --> Exception : Manual review triggered
+    InTransit --> Exception : Carrier exception raised
+    Exception --> [*]
+    Delivered --> [*]
+
+    note right of Pending
+        Tracking code generated
+        Carrier assigned
+        Emits: logistics.shipment_created
+    end note
+    note right of Delivered
+        Emits: logistics.shipment_updated
+        Triggers: notifications outbox
+    end note
+```
+
+---
+
+### 🔐 Dual Authentication Flow (JWT + API Key)
+```mermaid
+sequenceDiagram
+    autonumber
+    participant Client as Client (Browser / Server)
+    participant Gateway as Nginx API Gateway
+    participant Middleware as TenantAuthMiddleware
+    participant Redis as Redis Token Cache
+    participant DB as Control-Plane DB
+
+    alt JWT Bearer Token Auth (User Sessions)
+        Client->>Gateway: Request + Authorization: Bearer <jwt>
+        Gateway->>Middleware: Forward
+        Middleware->>Middleware: Decode JWT Header.Payload.Signature
+        Middleware->>Middleware: Verify HMAC-SHA256 with SECRET env var
+        Middleware->>Redis: SMISMEMBER blacklist:<user_id> <jti>
+        Redis-->>Middleware: 0 (not revoked)
+        Middleware->>Middleware: Construct TenantContext from claims
+        Middleware-->>Gateway: X-Tenant-Id, X-User-Id, X-Tenant-Tier
+    else API Key Auth (Machine-to-Machine / SaaS Integrations)
+        Client->>Gateway: Request + X-API-Key: sk_live_...
+        Gateway->>Middleware: Forward
+        Middleware->>Middleware: Extract 8-char prefix from key
+        Middleware->>Redis: HGET api_key_cache:<prefix> hash
+        alt Cache Hit
+            Redis-->>Middleware: Return cached SHA-256 hash
+        else Cache Miss
+            Middleware->>DB: SELECT * FROM api_keys WHERE prefix = ?
+            DB-->>Middleware: Return key_hash, tenant_id, scopes
+            Middleware->>Redis: HSET api_key_cache:<prefix> (TTL 5min)
+        end
+        Middleware->>Middleware: SHA-256(input_key) == stored_hash?
+        Middleware->>Middleware: Construct TenantContext from tenant_id
+    end
+    Middleware-->>Client: Authenticated Request Proceeds
+```
+
+---
+
+### 🗄️ Per-Service Database Architecture
+```mermaid
+flowchart TD
+    subgraph ControlPlane ["Control Plane (commerce_control DB — Port 5433)"]
+        T[(tenants)]
+        AK[(api_keys)]
+        T -->|1:N| AK
+    end
+
+    subgraph SharedServices ["Shared Microservice Databases (Port 5432)"]
+        subgraph UsersDB ["users_db"]
+            U[(users)]
+            US[(user_sessions)]
+        end
+        subgraph OrdersDB ["orders_db"]
+            O[(orders)]
+            OI[(order_items)]
+            O -->|1:N| OI
+        end
+        subgraph InventoryDB ["inventory_db"]
+            IV[(inventory_items)]
+        end
+        subgraph PaymentsDB ["payments_db"]
+            PI[(payment_intents)]
+        end
+        subgraph SuppliersDB ["suppliers_db"]
+            SU[(suppliers)]
+        end
+        subgraph ProductsDB ["products_db"]
+            P[(products)]
+            PA[(product_assets)]
+            P -->|1:N| PA
+        end
+        subgraph LogisticsDB ["logistics_db"]
+            SH[(shipments)]
+            SE[(shipment_events)]
+            SH -->|1:N| SE
+        end
+        subgraph NotificationsDB ["notifications_db"]
+            N[(notifications)]
+            ND[(notification_devices)]
+            NP[(user_preferences)]
+            NO[(notification_outbox)]
+        end
+    end
+
+    subgraph AnalyticsDB ["TimescaleDB — analytics_db (Port 5434)"]
+        HT1[(orders_daily — hypertable)]
+        HT2[(revenue_daily — hypertable)]
+        HT3[(product_views_daily — hypertable)]
+        HT4[(inventory_daily — hypertable)]
+        HT5[(delivery_performance_daily — hypertable)]
+        HT6[(payments_daily — hypertable)]
+        HT7[(top_products_7d — hypertable)]
+    end
+
+    RLS["Row-Level Security Policy\nSET LOCAL app.current_tenant_id = ?\nFilters ALL queries by tenant"]
+    RLS -.->|applied to| SharedServices
+```
+
+---
+
+### ⚡ Redis Streams Consumer Group Architecture
+```mermaid
+flowchart LR
+    subgraph Producers ["Redis Stream Producers"]
+        OP["order-service\nXADD stream:orders *"]
+        IP["inventory-management\nXADD stream:inventory *"]
+        PP["payments\nXADD stream:payments *"]
+        LP["logistics\nXADD stream:logistics *"]
+    end
+
+    subgraph Streams ["Redis Streams (Persistent Log)"]
+        SO["stream:orders\n├ order.created\n├ order.status_updated\n└ order.cancelled"]
+        SI["stream:inventory\n├ inventory.reserved\n├ inventory.rejected\n├ inventory.finalized\n└ inventory.released"]
+        SP["stream:payments\n├ payment.initiated\n├ payment.success\n└ payment.failed"]
+        SL["stream:logistics\n├ logistics.shipment_created\n└ logistics.shipment_updated"]
+    end
+
+    subgraph ConsumerGroups ["Consumer Groups (At-least-once delivery)"]
+        CG1["Group: inventory-workers\nConsumes: stream:orders\nACK on successful stock reservation"]
+        CG2["Group: order-workers\nConsumes: stream:inventory\nACK on status update"]
+        CG3["Group: logistics-workers\nConsumes: stream:inventory (finalized)\nACK on shipment creation"]
+        CG4["Group: notification-workers\nConsumes: ALL streams\nACK on outbox insert"]
+        CG5["Group: inventory-finalize-workers\nConsumes: stream:payments\nACK on stock commit"]
+    end
+
+    OP --> SO
+    IP --> SI
+    PP --> SP
+    LP --> SL
+
+    SO -->|XREADGROUP| CG1
+    SI -->|XREADGROUP| CG2
+    SI -->|XREADGROUP| CG3
+    SP -->|XREADGROUP| CG5
+    SO & SI & SP & SL -->|XREADGROUP| CG4
+```
+
+---
+
 ## 📊 Microservices Summary Table
 
 | Service | Port | Database | Primary Role | Event Streams / Bus |
@@ -153,7 +376,7 @@ flowchart LR
   * `GET /health` / `GET /metrics`
 * **Request/Response Models**: `CreateOrderRequest`, `UpdateOrderStatus`, `Order`, `OrderEvent`, `OrderStatus` (`Pending`, `Confirmed`, `Processing`, `Shipped`, `Delivered`, `Cancelled`, `Failed`, `Refunded`).
 * **Event Flows**: Emits `order.created` upon creation; listens to `inventory.reserved` / `inventory.rejected` to transition state; emits `inventory.release_command` and `payment.refund_command` on cancellation/failure; emits `logistics.shipment_preparation_command` on confirmation.
-* **OpenAPI Status**: Pending Utoipa integration.
+* **OpenAPI Status**: ✅ Active — Swagger UI at `/swagger-ui/` · OpenAPI spec at `/api-docs/openapi.json`
 
 ---
 
@@ -170,7 +393,7 @@ flowchart LR
   * `GET /health` / `GET /metrics`
 * **Request/Response Models**: `CreateInventoryRequest`, `UpdateStockRequest`, `StockUpdateEvent`, `ProductDeletedEvent`, `InventoryItem`.
 * **Event Flows**: Listens to `order.created` to reserve stock; publishes `inventory.reserved` or `inventory.rejected`; finalizes stock allocation on `payment.success`; releases reserved stock on `payment.failed` or `order.cancelled`.
-* **OpenAPI Status**: Pending Utoipa integration.
+* **OpenAPI Status**: ✅ Active — Swagger UI at `/swagger-ui/` · OpenAPI spec at `/api-docs/openapi.json`
 
 ---
 
@@ -188,7 +411,7 @@ flowchart LR
 * **Request/Response Models**: `CreatePaymentIntentRequest`, `PaymentIntent`, `PaymentEvent`, `PaymentWebhook`, `PaymentStatus` (`Initiated`, `Processing`, `Succeeded`, `Failed`, `Cancelled`, `Refunded`).
 * **Headers**: `Idempotency-Key`, `Stripe-Signature`, `Authorization: Bearer <jwt>`, `X-Tenant-Id`.
 * **Event Flows**: Emits `payment.initiated` on creation; emits `payment.success`, `payment.failed`, or `payment.cancelled` on provider webhook receipt; drives `inventory-management` finalization and `notifications` outbox.
-* **OpenAPI Status**: Pending Utoipa integration.
+* **OpenAPI Status**: ✅ Active — Swagger UI at `/swagger-ui/` · OpenAPI spec at `/api-docs/openapi.json`
 
 ---
 
@@ -204,7 +427,7 @@ flowchart LR
   * `GET /health` / `GET /metrics`
 * **Request/Response Models**: `CreateShipmentRequest`, `ListShipmentQuery`, `UpdateShipmentStatusRequest`, `LogisticsEvent`, `Shipment`, `ShipmentStatus`.
 * **Event Flows**: Auto-creates shipments upon consuming `inventory.finalized`; emits `logistics.shipment_created` and `logistics.shipment_updated` into Redis Streams & publishes event objects into RabbitMQ `analytics` exchange.
-* **OpenAPI Status**: Pending Utoipa integration.
+* **OpenAPI Status**: ✅ Active — Swagger UI at `/swagger-ui/` · OpenAPI spec at `/api-docs/openapi.json`
 
 ---
 
@@ -224,7 +447,7 @@ flowchart LR
   * `GET /health` / `GET /metrics`
 * **Request/Response Models**: `CreateNotificationRequest`, `ListNotificationsQuery`, `RegisterDeviceRequest`, `UpdatePreferencesRequest`, `Notification`, `NotificationChannel` (`Email`, `Sms`, `Push`, `InApp`), `NotificationStatus` (`Pending`, `Sent`, `Failed`, `Skipped`).
 * **Event Flows**: Subscribes to all domain events across the platform; matches user preferences; queues messages in outbox table; retries failed deliveries via DLQ worker.
-* **OpenAPI Status**: Pending Utoipa integration.
+* **OpenAPI Status**: ✅ Active — Swagger UI at `/swagger-ui/` · OpenAPI spec at `/api-docs/openapi.json`
 
 ---
 
@@ -265,7 +488,7 @@ flowchart LR
   * `order_by` (Optional): Sort direction (e.g. `day DESC`, `revenue DESC`).
   * `filters` (Optional Dynamic Equality Filters): Unreserved query parameters or JSON body map (e.g. `country=US`, `channel=Push`, `payment_method=stripe`, `product_id=<uuid>`).
 * **Event Flows**: Consumes all event messages published to RabbitMQ `analytics` exchange; parses JSON payloads; inserts hypertable rows; executes SQL window aggregations for dashboard reporting.
-* **OpenAPI Status**: Pending Utoipa integration.
+* **OpenAPI Status**: ✅ Active — Swagger UI at `/swagger-ui/` · OpenAPI spec at `/api-docs/openapi.json`
 
 ---
 
@@ -289,7 +512,7 @@ flowchart LR
 * **Request/Response Models**: `SignUpRequest`, `SignInRequest`, `AuthResponse`, `UpdateUserRequest`, `ForgotPasswordRequest`, `ResetPasswordRequest`, `VerifyEmailRequest`, `Users`, `UserRole`.
 * **Headers**: `Authorization: Bearer <jwt>`, `X-Tenant-Id`, `X-Tenant-Tier`.
 * **Event Flows**: Emits `user.created` on registration, `user.signed_in` / `user.signed_out` on authentication events, and `user.password_reset_requested`.
-* **OpenAPI Status**: Pending Utoipa integration.
+* **OpenAPI Status**: ✅ Active — Swagger UI at `/swagger-ui/` · OpenAPI spec at `/api-docs/openapi.json`
 
 ---
 
@@ -306,7 +529,7 @@ flowchart LR
   * `GET /health` / `GET /metrics`
 * **Request/Response Models**: `CreateTenantRequest`, `TenantResponse`, `GenerateKeyRequest`, `GenerateKeyResponse`, `UpdateTenantRequest`, `TenantTier`.
 * **Event Flows**: Emits `tenant.created`, `tenant.updated`, `tenant.suspended` into Redis Streams to configure downstream service dynamic pool routers.
-* **OpenAPI Status**: Pending Utoipa integration.
+* **OpenAPI Status**: ✅ Active — Swagger UI at `/swagger-ui/` · OpenAPI spec at `/api-docs/openapi.json`
 
 ---
 
@@ -324,7 +547,7 @@ flowchart LR
 * **Request/Response Models**: `CreateSupplierRequest`, `UpdateSupplierRequest`, `UpdateSupplierStatusRequest`, `SupplierResponse`, `Supplier`, `SupplierStatus`.
 * **Headers**: `X-Tenant-Id`, `Authorization: Bearer <jwt>`, `X-User-Id`.
 * **Event Flows**: Emits `supplier.created` on registration; emits `supplier.status_updated` on status verification; Notifications service consumes events for onboarding emails.
-* **OpenAPI Status**: Pending Utoipa integration.
+* **OpenAPI Status**: ✅ Active — Swagger UI at `/swagger-ui/` · OpenAPI spec at `/api-docs/openapi.json`
 
 ---
 
@@ -348,7 +571,7 @@ flowchart LR
 * **Request/Response Models**: `CreateProductRequest`, `UpdateProductRequest`, `BulkCreateRequest`, `RegisterProductAssetRequest`, `SignAssetUploadRequest`, `SignedUploadResponse`, `Product`, `ProductAsset`.
 * **Headers**: `X-Tenant-Id`, `Authorization: Bearer <jwt>`, `X-User-Id`.
 * **Event Flows**: Emits `product.created`, `product.updated`, `product.deleted` to Redis Streams (consumed by `inventory-management`) and sends product creation events to RabbitMQ analytics exchange.
-* **OpenAPI Status**: Pending Utoipa integration.
+* **OpenAPI Status**: ✅ Active — Swagger UI at `/swagger-ui/` · OpenAPI spec at `/api-docs/openapi.json`
 
 ---
 

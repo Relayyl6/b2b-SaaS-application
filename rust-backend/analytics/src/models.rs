@@ -54,6 +54,9 @@ pub struct Event {
 // QUERY STRUCT
 // (for GET /analytics?...)
 // =============================
+// Note: AnalyticsRequestQuery is documented in OpenAPI schema; runtime handler uses
+// HashMap<String,String> directly for full flexibility over unknown query params.
+#[allow(dead_code)]
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct AnalyticsRequestQuery {
     // REQUIRED

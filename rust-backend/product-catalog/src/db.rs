@@ -1,7 +1,6 @@
 use crate::models::{
     CreateProductRequest, Product, ProductAsset, RegisterProductAssetRequest, UpdateProductRequest,
 };
-use sqlx::PgPool;
 use uuid::Uuid;
 
 #[derive(Clone)]

@@ -6,7 +6,7 @@ use lapin::{
 };
 use std::env;
 use tokio::time::{timeout, Duration};
-use tracing::{error, warn};
+use tracing::error;
 
 #[derive(Clone)]
 pub struct DlqPublisher {

@@ -11,6 +11,7 @@ use platform::tenant::TenantContext;
 use platform::db_router::DynamicPoolRouter;
 
 #[derive(Clone)]
+#[allow(dead_code)]
 pub struct AnalyticsRepo {
     pool: PgPool,
 }

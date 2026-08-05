@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 use actix_web::body::EitherBody;
 use actix_web::{
     Error, HttpMessage,

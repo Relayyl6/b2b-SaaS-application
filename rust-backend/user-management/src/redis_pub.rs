@@ -10,6 +10,7 @@ pub struct RedisPublisher {
     enabled: bool,
 }
 
+#[allow(dead_code)]
 impl RedisPublisher {
     pub async fn new(redis_url: &str) -> Result<Self, RedisError> {
         let client = Client::open(redis_url)?;

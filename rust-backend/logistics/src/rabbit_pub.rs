@@ -1,11 +1,9 @@
 use crate::models::LogisticsEvent;
-use dotenvy::dotenv;
 use lapin::{
     options::{BasicPublishOptions, ConfirmSelectOptions, ExchangeDeclareOptions},
     types::FieldTable,
     BasicProperties, Connection, ConnectionProperties,
 };
-use std::env;
 use tokio::time::{timeout, Duration};
 use tracing::warn;
 

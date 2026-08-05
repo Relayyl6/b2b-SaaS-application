@@ -1,18 +1,16 @@
 use crate::db::ProductRepo;
 use crate::models::{
     BulkCreateRequest, CreateProductRequest, ProductEvent, RegisterProductAssetRequest,
-    SignAssetUploadRequest, SignedUploadResponse, UpdateProductRequest,
+    SignAssetUploadRequest, UpdateProductRequest,
 };
 use crate::rabbit_pub::publish_example_event;
 use crate::redis_pub::RedisPublisher;
 use crate::storage::StorageProvider;
 use actix_web::{HttpResponse, Responder, web};
-use chrono::Utc;
 use platform::db_router::DynamicPoolRouter;
 use platform::tenant::TenantContext;
 use redis::AsyncCommands;
 use std::collections::HashMap;
-use std::env;
 use uuid::Uuid;
 
 /// Creates a product and emits best-effort integration events.

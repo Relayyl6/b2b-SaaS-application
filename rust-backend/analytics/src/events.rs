@@ -5,6 +5,7 @@ use thiserror::Error;
 use uuid::Uuid;
 
 #[derive(Debug, Error)]
+#[allow(dead_code)]
 pub enum EventError {
     #[error("invalid event data: missing key {0}")]
     MissingKey(String),

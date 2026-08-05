@@ -9,6 +9,7 @@ pub struct UserRepo {
     pool: PgPool,
 }
 
+#[allow(dead_code)]
 impl UserRepo {
     pub fn new(pool: PgPool) -> Self {
         Self { pool }

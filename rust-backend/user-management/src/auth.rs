@@ -23,6 +23,7 @@ pub fn verify_password(hash: &str, password: &str) -> bool {
         .is_ok()
 }
 
+#[allow(dead_code)]
 pub fn create_jwt(
     user_id: Uuid,
     role: &UserRole,

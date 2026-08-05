@@ -10,6 +10,7 @@ use uuid::Uuid;
 pub struct NotificationRepo;
 
 impl NotificationRepo {
+    #[allow(dead_code)]
     pub fn new() -> Self {
         Self
     }

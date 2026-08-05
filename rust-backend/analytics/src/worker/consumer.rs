@@ -18,6 +18,7 @@ use tracing::{error, info};
 use uuid::Uuid;
 
 pub struct RabbitConsumer {
+    #[allow(dead_code)]
     pub pool: PgPool,
 }
 

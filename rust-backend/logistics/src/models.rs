@@ -15,6 +15,7 @@ pub enum ShipmentStatus {
 
 impl ShipmentStatus {
     /// Checks whether a shipment status transition is valid.
+    #[allow(dead_code)]
     pub fn can_transition_to(&self, next: &ShipmentStatus) -> bool {
         match (self, next) {
             (ShipmentStatus::Pending, ShipmentStatus::Intransit)
