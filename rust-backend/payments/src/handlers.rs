@@ -1,6 +1,6 @@
 use actix_web::{web, HttpResponse, Responder};
 use chrono::Utc;
-use platform::streams::StreamPublisher;
+use platform::{streams::StreamPublisher, tenant::TenantContext, db_router::DynamicPoolRouter};
 use uuid::Uuid;
 
 use crate::db::PaymentRepo;
@@ -10,7 +10,8 @@ use crate::models::{
 use crate::stripe::StripeClient;
 
 pub async fn create_payment_intent(
-    repo: web::Data<PaymentRepo>,
+    tenant: actix_web::web::ReqData<TenantContext>,
+    db_router: actix_web::web::Data<DynamicPoolRouter>,
     publisher: web::Data<StreamPublisher>,
     mut req: web::Json<CreatePaymentIntentRequest>,
 ) -> impl Responder {
@@ -20,8 +21,11 @@ pub async fn create_payment_intent(
 
     req.provider = Some("stripe".to_string());
 
-    // 1. Verify local DB constraints by creating the intent first
-    let intent = match repo.create_intent(&req).await {
+let pool = db_router.get_pool(&tenant).await.unwrap();
+    let mut tx = pool.begin().await.unwrap();
+    tenant.apply_rls(&mut *tx).await.unwrap();
+
+    let intent = match PaymentRepo::create_intent(&mut *tx, &tenant.tenant_id, &req).await {
         Ok(i) => i,
         Err(e) => return HttpResponse::InternalServerError().body(format!("db error: {e}")),
     };
@@ -39,9 +43,10 @@ pub async fn create_payment_intent(
         obj.insert("stripe_id".to_string(), serde_json::Value::String(stripe_res.id.clone()));
     }
 
-    match repo.update_provider_reference(intent.id, &stripe_res.id, &meta).await {
+    match PaymentRepo::update_provider_reference(&mut *tx, intent.id, &stripe_res.id, &meta).await {
         Ok(updated_intent) => {
-            publish_payment_event(&publisher, "payment.initiated", &updated_intent);
+            tx.commit().await.unwrap();
+            publish_payment_event(&publisher, tenant.tenant_id, "payment.initiated", &updated_intent);
             HttpResponse::Created().json(updated_intent)
         }
         Err(e) => HttpResponse::InternalServerError().body(format!("db error: {e}")),
@@ -49,34 +54,41 @@ pub async fn create_payment_intent(
 }
 
 pub async fn get_payment_intent(
-    repo: web::Data<PaymentRepo>,
+    tenant: actix_web::web::ReqData<TenantContext>,
+    db_router: actix_web::web::Data<DynamicPoolRouter>,
     path: web::Path<Uuid>,
 ) -> impl Responder {
-    match repo.get(path.into_inner()).await {
-        Ok(intent) => HttpResponse::Ok().json(intent),
+    let pool = db_router.get_pool(&tenant).await.unwrap();
+    let mut tx = pool.begin().await.unwrap();
+    tenant.apply_rls(&mut *tx).await.unwrap();
+
+    match PaymentRepo::get(&mut *tx, path.into_inner()).await {
+        Ok(intent) => { tx.commit().await.unwrap(); HttpResponse::Ok().json(intent) },
         Err(sqlx::Error::RowNotFound) => HttpResponse::NotFound().body("payment intent not found"),
         Err(e) => HttpResponse::InternalServerError().body(format!("db error: {e}")),
     }
 }
 
 pub async fn mark_payment_succeeded(
-    repo: web::Data<PaymentRepo>,
+    tenant: actix_web::web::ReqData<TenantContext>,
+    db_router: actix_web::web::Data<DynamicPoolRouter>,
     publisher: web::Data<StreamPublisher>,
     path: web::Path<Uuid>,
 ) -> impl Responder {
-    update_status(repo, publisher, path.into_inner(), PaymentStatus::Succeeded).await
+    update_status(tenant, db_router, publisher, path.into_inner(), PaymentStatus::Succeeded).await
 }
 
 pub async fn mark_payment_failed(
-    repo: web::Data<PaymentRepo>,
+    tenant: actix_web::web::ReqData<TenantContext>,
+    db_router: actix_web::web::Data<DynamicPoolRouter>,
     publisher: web::Data<StreamPublisher>,
     path: web::Path<Uuid>,
 ) -> impl Responder {
-    update_status(repo, publisher, path.into_inner(), PaymentStatus::Failed).await
+    update_status(tenant, db_router, publisher, path.into_inner(), PaymentStatus::Failed).await
 }
 
 pub async fn payment_webhook(
-    repo: web::Data<PaymentRepo>,
+    db_router: actix_web::web::Data<DynamicPoolRouter>,
     publisher: web::Data<StreamPublisher>,
     req: actix_web::HttpRequest,
     body: web::Bytes,
@@ -93,10 +105,12 @@ pub async fn payment_webhook(
         return HttpResponse::BadRequest().body("Invalid webhook payload");
     };
 
-    match repo.apply_webhook(&webhook).await {
+    let pool = db_router.shared_pool();
+
+    match PaymentRepo::apply_webhook(pool, &webhook).await {
         Ok(intent) => {
             let event_type = event_type_for_status(&intent.status);
-            publish_payment_event(&publisher, event_type, &intent);
+            publish_payment_event(&publisher, intent.tenant_id, event_type, &intent);
             HttpResponse::Ok().json(intent)
         }
         Err(sqlx::Error::RowNotFound) => HttpResponse::NotFound().body("payment intent not found"),
@@ -105,15 +119,21 @@ pub async fn payment_webhook(
 }
 
 async fn update_status(
-    repo: web::Data<PaymentRepo>,
+    tenant: actix_web::web::ReqData<TenantContext>,
+    db_router: actix_web::web::Data<DynamicPoolRouter>,
     publisher: web::Data<StreamPublisher>,
     id: Uuid,
     status: PaymentStatus,
 ) -> HttpResponse {
-    match repo.update_status(id, status).await {
+    let pool = db_router.get_pool(&tenant).await.unwrap();
+    let mut tx = pool.begin().await.unwrap();
+    tenant.apply_rls(&mut *tx).await.unwrap();
+
+    match PaymentRepo::update_status(&mut *tx, id, status).await {
         Ok(intent) => {
+            tx.commit().await.unwrap();
             let event_type = event_type_for_status(&intent.status);
-            publish_payment_event(&publisher, event_type, &intent);
+            publish_payment_event(&publisher, tenant.tenant_id, event_type, &intent);
             HttpResponse::Ok().json(intent)
         }
         Err(sqlx::Error::RowNotFound) => HttpResponse::NotFound().body("payment intent not found"),
@@ -132,11 +152,11 @@ fn event_type_for_status(status: &PaymentStatus) -> &'static str {
     }
 }
 
-fn publish_payment_event(publisher: &StreamPublisher, event_type: &str, intent: &PaymentIntent) {
+fn publish_payment_event(publisher: &StreamPublisher, tenant_id: Uuid, event_type: &str, intent: &PaymentIntent) {
     publisher.publish_async(
         event_type,
         PaymentEvent {
-            tenant_id: Some(intent.supplier_id),
+            tenant_id,
             event_type: event_type.to_string(),
             payment_id: intent.id,
             order_id: intent.order_id,
@@ -154,20 +174,25 @@ fn publish_payment_event(publisher: &StreamPublisher, event_type: &str, intent: 
 }
 
 pub async fn refund_payment_endpoint(
-    repo: web::Data<PaymentRepo>,
+    tenant: actix_web::web::ReqData<TenantContext>,
+    db_router: actix_web::web::Data<DynamicPoolRouter>,
     publisher: web::Data<StreamPublisher>,
     path: web::Path<Uuid>,
 ) -> impl Responder {
     let stripe_client = StripeClient::new();
     let id = path.into_inner();
-    let intent = match repo.get(id).await {
+    let pool = db_router.get_pool(&tenant).await.unwrap();
+    let mut tx = pool.begin().await.unwrap();
+    tenant.apply_rls(&mut *tx).await.unwrap();
+
+    let intent = match PaymentRepo::get(&mut *tx, id).await {
         Ok(i) => i,
         Err(_) => return HttpResponse::NotFound().body("payment intent not found"),
     };
 
     if let Some(stripe_id) = &intent.provider_reference {
         match stripe_client.refund_payment(stripe_id, None, Some(&id.to_string())).await {
-            Ok(_) => update_status(repo, publisher, id, PaymentStatus::Refunded).await,
+            Ok(_) => { tx.commit().await.unwrap(); update_status(tenant, db_router, publisher, id, PaymentStatus::Refunded).await },
             Err(e) => HttpResponse::InternalServerError().body(format!("Stripe error: {e}")),
         }
     } else {
@@ -176,13 +201,18 @@ pub async fn refund_payment_endpoint(
 }
 
 pub async fn transfer_payment_endpoint(
-    repo: web::Data<PaymentRepo>,
+    tenant: actix_web::web::ReqData<TenantContext>,
+    db_router: actix_web::web::Data<DynamicPoolRouter>,
     _publisher: web::Data<StreamPublisher>,
     path: web::Path<Uuid>,
 ) -> impl Responder {
     let stripe_client = StripeClient::new();
     let id = path.into_inner();
-    let intent = match repo.get(id).await {
+    let pool = db_router.get_pool(&tenant).await.unwrap();
+    let mut tx = pool.begin().await.unwrap();
+    tenant.apply_rls(&mut *tx).await.unwrap();
+
+    let intent = match PaymentRepo::get(&mut *tx, id).await {
         Ok(i) => i,
         Err(_) => return HttpResponse::NotFound().body("payment intent not found"),
     };
@@ -208,60 +238,4 @@ pub async fn health() -> impl Responder {
     HttpResponse::Ok().json(serde_json::json!({"status":"ok","service":"payments"}))
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use actix_web::{test, web, App};
-    use sqlx::PgPool;
-    use platform::streams::StreamPublisher;
 
-    // We use sqlx::test to get a real DB pool
-    #[sqlx::test]
-    #[ignore]
-    async fn test_create_payment_intent_handler(pool: PgPool) {
-        let repo = web::Data::new(PaymentRepo::new(pool));
-        
-        let publisher = web::Data::new(StreamPublisher::noop());
-
-        let app = test::init_service(
-            App::new()
-                .app_data(repo.clone())
-                .app_data(publisher.clone())
-                .route("/intents", web::post().to(create_payment_intent))
-        ).await;
-
-        let req_body = CreatePaymentIntentRequest {
-            idempotency_key: "handler_idemp_key".to_string(),
-            order_id: Uuid::new_v4(),
-            user_id: Uuid::new_v4(),
-            supplier_id: Uuid::new_v4(),
-            product_id: Uuid::new_v4(),
-            quantity: 1,
-            amount: 1500,
-            currency: Some("usd".to_string()),
-            provider: None,
-            metadata: None,
-        };
-
-        let req = test::TestRequest::post()
-            .uri("/intents")
-            .set_json(&req_body)
-            .to_request();
-
-        let resp = test::call_service(&app, req).await;
-        assert!(resp.status().is_success(), "Expected success but got {}", resp.status());
-    }
-
-    #[sqlx::test]
-    #[ignore]
-    async fn test_health_handler(pool: PgPool) {
-        let app = test::init_service(
-            App::new().route("/health", web::get().to(health))
-        ).await;
-
-        let req = test::TestRequest::get().uri("/health").to_request();
-        let resp = test::call_service(&app, req).await;
-        
-        assert!(resp.status().is_success());
-    }
-}

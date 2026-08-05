@@ -112,19 +112,20 @@ async fn handle_event(
                 })),
             };
 
-            repo.create_intent(&req).await?;
+            let t_id = event.tenant_id.or(event.supplier_id).unwrap_or_default();
+            PaymentRepo::create_intent(&repo.pool, &t_id, &req).await?;
             println!("Auto-generated PaymentIntent for order {}", order_id);
         }
         "order.cancelled" | "payment.refund_command" => {
             let order_id = event.order_id.ok_or("Missing order_id")?;
-            if let Ok(intent) = repo.get_intent_by_order_id(order_id).await {
+            if let Ok(intent) = PaymentRepo::get_intent_by_order_id(&repo.pool, order_id).await {
                 if intent.status == crate::models::PaymentStatus::Succeeded {
                     // It succeeded already, so we must refund, not cancel
                     if let Some(stripe_id) = intent.provider_reference {
                         if let Err(e) = stripe_client.refund_payment(&stripe_id, None, Some(&intent.id.to_string())).await {
                             eprintln!("Failed to refund intent in Stripe: {e}");
                         } else {
-                            repo.update_status(intent.id, crate::models::PaymentStatus::Refunded).await?;
+                            PaymentRepo::update_status(&repo.pool, intent.id, crate::models::PaymentStatus::Refunded).await?;
                             println!("Refunded PaymentIntent for order {}", order_id);
                         }
                     }
@@ -135,20 +136,20 @@ async fn handle_event(
                             eprintln!("Failed to cancel intent in Stripe: {e}");
                         }
                     }
-                    repo.cancel_by_order_id(order_id).await?;
+                    PaymentRepo::cancel_by_order_id(&repo.pool, order_id).await?;
                     println!("Cancelled PaymentIntent for order {}", order_id);
                 }
             }
         }
         "order.refunded" => {
             let order_id = event.order_id.ok_or("Missing order_id")?;
-            if let Ok(intent) = repo.get_intent_by_order_id(order_id).await {
+            if let Ok(intent) = PaymentRepo::get_intent_by_order_id(&repo.pool, order_id).await {
                 if let Some(stripe_id) = intent.provider_reference {
                     if let Err(e) = stripe_client.refund_payment(&stripe_id, None, Some(&intent.id.to_string())).await {
                         eprintln!("Failed to refund intent in Stripe: {e}");
                     } else {
                         // Mark as refunded in DB
-                        repo.update_status(intent.id, crate::models::PaymentStatus::Refunded).await?;
+                        PaymentRepo::update_status(&repo.pool, intent.id, crate::models::PaymentStatus::Refunded).await?;
                         println!("Refunded PaymentIntent for order {}", order_id);
                     }
                 }
@@ -156,7 +157,7 @@ async fn handle_event(
         }
         "order.delivered" => {
             let order_id = event.order_id.ok_or("Missing order_id")?;
-            if let Ok(intent) = repo.get_intent_by_order_id(order_id).await {
+            if let Ok(intent) = PaymentRepo::get_intent_by_order_id(&repo.pool, order_id).await {
                 let amount_cents = intent.amount;
                 
                 // Deduct 5% platform fee

@@ -15,6 +15,7 @@ pub async fn sign_up_user(
     repo: web::Data<UserRepo>,
     redis_pub: web::Data<platform::streams::StreamPublisher>,
     redis_client: web::Data<redis::Client>,
+    req: HttpRequest,
     payload: web::Json<SignUpRequest>,
 ) -> HttpResponse {
     let pw = &payload.password;
@@ -28,11 +29,19 @@ pub async fn sign_up_user(
         }));
     }
 
-    match repo.sign_up(&payload).await {
+    let tenant_id = req
+        .headers()
+        .get("X-Tenant-Id")
+        .and_then(|h| h.to_str().ok())
+        .and_then(|s| Uuid::parse_str(s).ok())
+        .or(payload.tenant_id)
+        .unwrap_or_else(|| Uuid::new_v5(&Uuid::NAMESPACE_OID, payload.email.as_bytes()));
+
+    match repo.sign_up(&payload, tenant_id).await {
         Ok((user, (access_token, refresh_token))) => {
             #[derive(serde::Serialize)]
             struct UserCreatedEvent {
-                tenant_id: Option<Uuid>,
+                tenant_id: Uuid,
                 user_id: String,
                 email: String,
                 role: String,
@@ -46,11 +55,10 @@ pub async fn sign_up_user(
                 let _: Result<(), _> = redis::cmd("SETEX").arg(&redis_key).arg(86400 * 3).arg(&user.email).query_async(&mut conn).await;
             }
 
-            let tenant_id = Uuid::new_v5(&Uuid::NAMESPACE_OID, user.id.to_string().as_bytes());
             redis_pub.publish_async(
                 "user.created",
                 UserCreatedEvent {
-                    tenant_id: Some(tenant_id),
+                    tenant_id: user.tenant_id,
                     user_id: user.id.to_string(),
                     email: user.email.clone(),
                     role: format!("{:?}", user.role),
@@ -75,9 +83,17 @@ pub async fn sign_up_user(
 
 pub async fn sign_in_user(
     repo: web::Data<UserRepo>,
+    req: HttpRequest,
     payload: web::Json<SignInRequest>,
 ) -> HttpResponse {
-    match repo.sign_in(&payload).await {
+    let tenant_id = req
+        .headers()
+        .get("X-Tenant-Id")
+        .and_then(|h| h.to_str().ok())
+        .and_then(|s| Uuid::parse_str(s).ok())
+        .or(payload.tenant_id);
+
+    match repo.sign_in(&payload, tenant_id).await {
         Ok((user, (access_token, refresh_token))) => HttpResponse::Ok().json(serde_json::json!({
             "message": "user successfully signed in",
             "user": user,
@@ -274,10 +290,18 @@ pub async fn forgot_password(
     repo: web::Data<UserRepo>,
     redis_client: web::Data<redis::Client>,
     redis_pub: web::Data<platform::streams::StreamPublisher>,
+    req: HttpRequest,
     payload: web::Json<crate::models::ForgotPasswordRequest>,
 ) -> HttpResponse {
     let email = &payload.email;
-    let Ok(exists) = crate::auth::user_exists(repo.pool(), email).await else {
+    let tenant_id = req
+        .headers()
+        .get("X-Tenant-Id")
+        .and_then(|h| h.to_str().ok())
+        .and_then(|s| Uuid::parse_str(s).ok())
+        .unwrap_or_else(|| Uuid::new_v5(&Uuid::NAMESPACE_OID, email.as_bytes()));
+
+    let Ok(exists) = crate::auth::user_exists(repo.pool(), email, tenant_id).await else {
         return HttpResponse::InternalServerError().finish();
     };
 
@@ -293,16 +317,15 @@ pub async fn forgot_password(
         
         #[derive(serde::Serialize)]
         struct PasswordResetRequestedEvent {
-            tenant_id: Option<Uuid>,
+            tenant_id: Uuid,
             email: String,
             token: String,
             timestamp: chrono::DateTime<chrono::Utc>,
         }
-        let tenant_id = Uuid::new_v5(&Uuid::NAMESPACE_OID, email.as_bytes());
         redis_pub.publish_async(
             "user.password_reset_requested",
             PasswordResetRequestedEvent {
-                tenant_id: Some(tenant_id),
+                tenant_id,
                 email: email.clone(),
                 token,
                 timestamp: chrono::Utc::now(),

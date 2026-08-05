@@ -4,7 +4,7 @@ use uuid::Uuid;
 
 #[derive(Clone)]
 pub struct PaymentRepo {
-    pool: PgPool,
+    pub pool: PgPool,
 }
 
 impl PaymentRepo {
@@ -12,20 +12,25 @@ impl PaymentRepo {
         Self { pool }
     }
 
-    pub async fn create_intent(
-        &self,
+    pub async fn create_intent<'a, E>(
+        executor: E,
+        tenant_id: &Uuid,
         req: &CreatePaymentIntentRequest,
-    ) -> Result<PaymentIntent, sqlx::Error> {
+    ) -> Result<PaymentIntent, sqlx::Error>
+    where
+        E: sqlx::Executor<'a, Database = sqlx::Postgres>,
+    {
         sqlx::query_as::<_, PaymentIntent>(
             r#"
             INSERT INTO payment_intents (
-                idempotency_key, order_id, user_id, supplier_id, product_id, quantity, amount, currency, provider, metadata
+                tenant_id, idempotency_key, order_id, user_id, supplier_id, product_id, quantity, amount, currency, provider, metadata
             )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, COALESCE($8, 'NGN'), COALESCE($9, 'manual'), COALESCE($10, '{}'::jsonb))
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, COALESCE($9, 'NGN'), COALESCE($10, 'manual'), COALESCE($11, '{}'::jsonb))
             ON CONFLICT(idempotency_key) DO UPDATE SET updated_at = payment_intents.updated_at
             RETURNING *
             "#,
         )
+        .bind(tenant_id)
         .bind(&req.idempotency_key)
         .bind(req.order_id)
         .bind(req.user_id)
@@ -36,28 +41,37 @@ impl PaymentRepo {
         .bind(&req.currency)
         .bind(&req.provider)
         .bind(req.metadata.as_ref())
-        .fetch_one(&self.pool)
+        .fetch_one(executor)
         .await
     }
 
-    pub async fn get(&self, id: Uuid) -> Result<PaymentIntent, sqlx::Error> {
+    pub async fn get<'a, E>(executor: E, id: Uuid) -> Result<PaymentIntent, sqlx::Error>
+    where
+        E: sqlx::Executor<'a, Database = sqlx::Postgres>,
+    {
         sqlx::query_as::<_, PaymentIntent>("SELECT * FROM payment_intents WHERE id = $1")
             .bind(id)
-            .fetch_one(&self.pool)
+            .fetch_one(executor)
             .await
     }
 
-    pub async fn get_intent_by_order_id(&self, order_id: Uuid) -> Result<PaymentIntent, sqlx::Error> {
+    pub async fn get_intent_by_order_id<'a, E>(executor: E, order_id: Uuid) -> Result<PaymentIntent, sqlx::Error>
+    where
+        E: sqlx::Executor<'a, Database = sqlx::Postgres>,
+    {
         sqlx::query_as::<_, PaymentIntent>("SELECT * FROM payment_intents WHERE order_id = $1 ORDER BY created_at DESC LIMIT 1")
             .bind(order_id)
-            .fetch_one(&self.pool)
+            .fetch_one(executor)
             .await
     }
 
-    pub async fn apply_webhook(
-        &self,
+    pub async fn apply_webhook<'a, E>(
+        executor: E,
         webhook: &PaymentWebhook,
-    ) -> Result<PaymentIntent, sqlx::Error> {
+    ) -> Result<PaymentIntent, sqlx::Error>
+    where
+        E: sqlx::Executor<'a, Database = sqlx::Postgres>,
+    {
         sqlx::query_as::<_, PaymentIntent>(
             r#"
             UPDATE payment_intents
@@ -76,51 +90,63 @@ impl PaymentRepo {
         .bind(&webhook.provider_reference)
         .bind(webhook.metadata.as_ref())
         .bind(&webhook.idempotency_key)
-        .fetch_one(&self.pool)
+        .fetch_one(executor)
         .await
     }
 
-    pub async fn update_status(
-        &self,
+    pub async fn update_status<'a, E>(
+        executor: E,
         id: Uuid,
         status: PaymentStatus,
-    ) -> Result<PaymentIntent, sqlx::Error> {
+    ) -> Result<PaymentIntent, sqlx::Error>
+    where
+        E: sqlx::Executor<'a, Database = sqlx::Postgres>,
+    {
         sqlx::query_as::<_, PaymentIntent>(
             "UPDATE payment_intents SET status = $1, updated_at = NOW() WHERE id = $2 RETURNING *",
         )
         .bind(status)
         .bind(id)
-        .fetch_one(&self.pool)
+        .fetch_one(executor)
         .await
     }
 
-    pub async fn update_provider_reference(
-        &self,
+    pub async fn update_provider_reference<'a, E>(
+        executor: E,
         id: Uuid,
         provider_reference: &str,
         metadata: &serde_json::Value,
-    ) -> Result<PaymentIntent, sqlx::Error> {
+    ) -> Result<PaymentIntent, sqlx::Error>
+    where
+        E: sqlx::Executor<'a, Database = sqlx::Postgres>,
+    {
         sqlx::query_as::<_, PaymentIntent>(
             "UPDATE payment_intents SET provider_reference = $1, metadata = $2, updated_at = NOW() WHERE id = $3 RETURNING *",
         )
         .bind(provider_reference)
         .bind(metadata)
         .bind(id)
-        .fetch_one(&self.pool)
+        .fetch_one(executor)
         .await
     }
 
-    pub async fn cancel_by_order_id(&self, order_id: Uuid) -> Result<(), sqlx::Error> {
-        self.cancel_by_order_id_returning(order_id).await?;
+    pub async fn cancel_by_order_id<'a, E>(executor: E, order_id: Uuid) -> Result<(), sqlx::Error>
+    where
+        E: sqlx::Executor<'a, Database = sqlx::Postgres>,
+    {
+        PaymentRepo::cancel_by_order_id_returning(executor, order_id).await?;
         Ok(())
     }
 
-    pub async fn cancel_by_order_id_returning(&self, order_id: Uuid) -> Result<PaymentIntent, sqlx::Error> {
+    pub async fn cancel_by_order_id_returning<'a, E>(executor: E, order_id: Uuid) -> Result<PaymentIntent, sqlx::Error>
+    where
+        E: sqlx::Executor<'a, Database = sqlx::Postgres>,
+    {
         sqlx::query_as::<_, PaymentIntent>(
             "UPDATE payment_intents SET status = 'cancelled', updated_at = NOW() WHERE order_id = $1 AND status != 'succeeded' RETURNING *"
         )
         .bind(order_id)
-        .fetch_one(&self.pool)
+        .fetch_one(executor)
         .await
     }
 }
@@ -148,12 +174,12 @@ mod tests {
         };
 
         // First creation
-        let intent1 = repo.create_intent(&req).await.expect("Failed to create intent");
+        let tenant_id = Uuid::new_v4(); let intent1 = PaymentRepo::create_intent(&repo.pool, &tenant_id, &req).await.expect("Failed to create intent");
         assert_eq!(intent1.idempotency_key, "test_idemp_key");
         assert_eq!(intent1.amount, 5000);
 
         // Idempotent creation (same key)
-        let intent2 = repo.create_intent(&req).await.expect("Failed idempotent creation");
+        let intent2 = PaymentRepo::create_intent(&repo.pool, &tenant_id, &req).await.expect("Failed idempotent creation");
         assert_eq!(intent1.id, intent2.id, "Idempotent request should return the same intent ID");
     }
 
@@ -174,7 +200,7 @@ mod tests {
             metadata: None,
         };
 
-        let intent = repo.create_intent(&req).await.unwrap();
+        let tenant_id = Uuid::new_v4(); let intent = PaymentRepo::create_intent(&repo.pool, &tenant_id, &req).await.unwrap();
 
         let webhook = PaymentWebhook {
             provider_reference: None,
@@ -183,7 +209,7 @@ mod tests {
             metadata: None,
         };
 
-        let updated = repo.apply_webhook(&webhook).await.expect("Failed to apply webhook");
+        let updated = PaymentRepo::apply_webhook(&repo.pool, &webhook).await.expect("Failed to apply webhook");
         assert_eq!(updated.id, intent.id);
         assert!(matches!(updated.status, PaymentStatus::Succeeded));
     }

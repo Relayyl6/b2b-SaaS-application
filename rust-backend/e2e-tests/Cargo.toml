@@ -21,6 +21,7 @@ hmac = { workspace = true }
 sha2 = { workspace = true }
 hex = { workspace = true }
 actix-web = { workspace = true }
+dotenvy = { workspace = true }
 
 [[test]]
 name = "event_mesh_test"

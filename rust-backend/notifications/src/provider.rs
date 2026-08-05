@@ -36,7 +36,7 @@ impl NotificationProvider {
                 .unwrap_or_else(|_| "https://exp.host/--/api/v2/push/send".to_string()),
             expo_access_token: env_non_empty("EXPO_ACCESS_TOKEN"),
         }
-    }xw
+    }
 
     pub async fn send(&self, notification: &Notification) -> Result<(), String> {
         if self.dry_run {

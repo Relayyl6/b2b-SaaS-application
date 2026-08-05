@@ -19,6 +19,8 @@ use std::env;
 
 use crate::redis_sub::listen_to_redis_events;
 
+use platform::middleware::TenantAuthMiddleware;
+
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
     dotenv().ok();
@@ -78,10 +80,15 @@ async fn main() -> std::io::Result<()> {
             .app_data(redis_pub.clone())
             .app_data(redis_client.clone())
             .route("/metrics", web::get().to(metrics::metrics_handler))
-            .service(routes::create_order)
-            .service(routes::get_order)
-            .service(routes::update_status)
-            .service(routes::delete_order)
+            .route("/health", web::get().to(|| async { actix_web::HttpResponse::Ok().body("OK") }))
+            .service(
+                web::scope("/api/v1")
+                    .wrap(TenantAuthMiddleware::with_redis(redis_client.get_ref().clone()))
+                    .service(routes::create_order)
+                    .service(routes::get_order)
+                    .service(routes::update_status)
+                    .service(routes::delete_order)
+            )
     })
     .bind(format!("0.0.0.0:{}", port))?
     .run()

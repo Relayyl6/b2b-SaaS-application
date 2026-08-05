@@ -1,4 +1,3 @@
-use actix_web::web;
 use platform::{metrics, streams};
 use std::env;
 
@@ -28,7 +27,7 @@ const EVENTS: &[&str] = &[
 ];
 
 pub async fn listen_to_redis_events(
-    repo: web::Data<NotificationRepo>,
+    pool: sqlx::PgPool,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let redis_url = env::var("REDIS_URL")?;
     let consumer = env::var("CONSUMER_NAME").unwrap_or_else(|_| "notifications-1".to_string());
@@ -39,7 +38,7 @@ pub async fn listen_to_redis_events(
         &consumer,
         EVENTS,
         move |envelope| {
-            let repo = repo.clone();
+            let pool = pool.clone();
             async move {
                 let event_type = envelope.event_type.clone();
                 let event = &envelope.payload;
@@ -59,13 +58,14 @@ pub async fn listen_to_redis_events(
                     }
                 }
 
+                let tenant_id = tenant_id.unwrap();
+
                 let Some((subject, body, priority)) =
                     notification_from_event(&envelope.event_type, &envelope.payload)
                 else {
                     return Ok(());
                 };
                 
-                let event = &envelope.payload;
                 let recipient = event
                     .recipient
                     .clone()
@@ -73,11 +73,25 @@ pub async fn listen_to_redis_events(
                     .or_else(|| event.supplier_id.map(|id| format!("supplier:{id}")))
                     .unwrap_or_else(|| "system".to_string());
 
+                let mut tx = match pool.begin().await {
+                    Ok(tx) => tx,
+                    Err(e) => {
+                        eprintln!("Failed to acquire DB transaction in redis_sub: {e}");
+                        return Ok(());
+                    }
+                };
+
+                let tenant_setting_query = format!("SET LOCAL app.current_tenant_id = '{}'", tenant_id);
+                if let Err(e) = sqlx::query(&tenant_setting_query).execute(&mut *tx).await {
+                    eprintln!("Failed to set RLS context in redis sub: {e}");
+                    return Ok(());
+                }
+
                 // Fetch user preferences dynamically
                 let prefs = if let Some(uid) = event.user_id {
-                    repo.get_preferences(uid).await.unwrap_or_else(|_| UserPreference {
+                    NotificationRepo::get_preferences(&mut *tx, tenant_id, uid).await.unwrap_or_else(|_| UserPreference {
                         user_id: uid,
-                        tenant_id: event.tenant_id.unwrap_or_else(uuid::Uuid::nil),
+                        tenant_id,
                         email_enabled: true,
                         sms_enabled: false,
                         push_enabled: false,
@@ -88,7 +102,7 @@ pub async fn listen_to_redis_events(
                 } else {
                     UserPreference {
                         user_id: uuid::Uuid::new_v4(),
-                        tenant_id: event.tenant_id.unwrap_or_else(uuid::Uuid::nil),
+                        tenant_id,
                         email_enabled: true,
                         sms_enabled: false,
                         push_enabled: false,
@@ -123,7 +137,7 @@ pub async fn listen_to_redis_events(
                         payload: Some(event.payload.clone()),
                     };
 
-                    match repo.create(&req).await {
+                    match NotificationRepo::create(&mut *tx, tenant_id, &req).await {
                         Ok(_) => {
                             metrics::inc_event("notifications", &envelope.stream, &envelope.event_type, "ok");
                         }
@@ -133,6 +147,8 @@ pub async fn listen_to_redis_events(
                         }
                     }
                 }
+
+                let _ = tx.commit().await;
 
                 Ok(())
             }

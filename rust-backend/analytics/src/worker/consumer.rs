@@ -244,16 +244,25 @@ async fn insert_event(pool: &PgPool, event: &Event) -> Result<(), sqlx::Error> {
         .and_then(|s| s.parse().ok())
         .unwrap_or_else(|| Utc::now());
 
+    let tenant_id: Option<Uuid> = event.tenant_id.or_else(|| {
+        event
+            .data
+            .get("tenant_id")
+            .and_then(|v| v.as_str())
+            .and_then(|s| Uuid::parse_str(s).ok())
+    });
+
     sqlx::query(
         r#"
-            INSERT INTO analytics.events (id, event_type, event_timestamp, data)
-            VALUES ($1, $2, $3, $4)
+            INSERT INTO analytics.events (id, event_type, event_timestamp, data, tenant_id)
+            VALUES ($1, $2, $3, $4, $5)
         "#,
     )
     .bind(id)
     .bind(&event.event_type)
     .bind(timestamp)
     .bind(&event.data)
+    .bind(tenant_id)
     .execute(pool)
     .await?;
 

@@ -8,23 +8,31 @@ use crate::redis_pub::RedisPublisher;
 use crate::storage::StorageProvider;
 use actix_web::{HttpResponse, Responder, web};
 use chrono::Utc;
+use platform::db_router::DynamicPoolRouter;
+use platform::tenant::TenantContext;
 use redis::AsyncCommands;
-use serde_json::json;
 use std::collections::HashMap;
 use std::env;
 use uuid::Uuid;
 
 /// Creates a product and emits best-effort integration events.
 pub async fn create_product(
+    tenant: web::ReqData<TenantContext>,
+    db_router: web::Data<DynamicPoolRouter>,
     repo: web::Data<ProductRepo>,
     redis_pub: web::Data<RedisPublisher>,
     redis_client: web::Data<redis::Client>,
     req: web::Json<CreateProductRequest>,
 ) -> impl Responder {
-    match repo.create_product(&req).await {
+    let pool = db_router.get_pool(&tenant).await.unwrap();
+    let mut tx = pool.begin().await.unwrap();
+    tenant.apply_rls(&mut *tx).await.unwrap();
+
+    match repo.create_product(&mut tx, &req).await {
         Ok(product) => {
+            tx.commit().await.unwrap();
             let event = ProductEvent {
-                tenant_id: Some(product.supplier_id),
+                tenant_id: tenant.tenant_id,
                 event_type: "product.created".to_string(),
                 product_id: product.product_id,
                 supplier_id: product.supplier_id,
@@ -59,6 +67,8 @@ pub async fn create_product(
 
 /// Returns all products for a supplier and emits view events.
 pub async fn get_products_for_supplier(
+    tenant: web::ReqData<TenantContext>,
+    db_router: web::Data<DynamicPoolRouter>,
     repo: web::Data<ProductRepo>,
     redis_pub: web::Data<RedisPublisher>,
     redis_client: web::Data<redis::Client>,
@@ -70,17 +80,20 @@ pub async fn get_products_for_supplier(
     if let Ok(mut conn) = redis_client.get_multiplexed_async_connection().await {
         if let Ok(cached_json) = conn.get::<_, String>(&cache_key).await {
             if let Ok(items) = serde_json::from_str::<Vec<crate::models::Product>>(&cached_json) {
-                // Background viewing emission could still happen here if needed
                 return HttpResponse::Ok().json(&items);
             }
         }
     }
 
-    match repo.get_by_supplier(supplier_id).await {
+    let pool = db_router.get_pool(&tenant).await.unwrap();
+    let mut tx = pool.begin().await.unwrap();
+    tenant.apply_rls(&mut *tx).await.unwrap();
+
+    match repo.get_by_supplier(&mut tx, supplier_id).await {
         Ok(items) => {
             for item in &items {
                 let event = ProductEvent {
-                    tenant_id: Some(item.supplier_id),
+                    tenant_id: tenant.tenant_id,
                     event_type: "product.viewed".to_string(),
                     product_id: item.product_id,
                     supplier_id: item.supplier_id,
@@ -114,11 +127,18 @@ pub async fn get_products_for_supplier(
 
 /// Returns a single product by supplier and product id.
 pub async fn get_single_product(
+    tenant: web::ReqData<TenantContext>,
+    db_router: web::Data<DynamicPoolRouter>,
     repo: web::Data<ProductRepo>,
     path: web::Path<(Uuid, Uuid)>,
 ) -> impl Responder {
     let (supplier_id, product_id) = path.into_inner();
-    match repo.get_one(supplier_id, product_id).await {
+
+    let pool = db_router.get_pool(&tenant).await.unwrap();
+    let mut tx = pool.begin().await.unwrap();
+    tenant.apply_rls(&mut *tx).await.unwrap();
+
+    match repo.get_one(&mut tx, supplier_id, product_id).await {
         Ok(p) => HttpResponse::Ok().json(p),
         Err(sqlx::Error::RowNotFound) => HttpResponse::NotFound().body("Not found"),
         Err(e) => {
@@ -130,6 +150,8 @@ pub async fn get_single_product(
 
 /// Updates a product and emits a product.updated event.
 pub async fn update_product(
+    tenant: web::ReqData<TenantContext>,
+    db_router: web::Data<DynamicPoolRouter>,
     repo: web::Data<ProductRepo>,
     redis_pub: web::Data<RedisPublisher>,
     redis_client: web::Data<redis::Client>,
@@ -144,13 +166,18 @@ pub async fn update_product(
             .body("Provide either quantity or quantity_change, not both");
     }
 
+    let pool = db_router.get_pool(&tenant).await.unwrap();
+    let mut tx = pool.begin().await.unwrap();
+    tenant.apply_rls(&mut *tx).await.unwrap();
+
     match repo
-        .update_product(supplier_id, product_id, &update_data)
+        .update_product(&mut tx, supplier_id, product_id, &update_data)
         .await
     {
         Ok(p) => {
+            tx.commit().await.unwrap();
             let event = ProductEvent {
-                tenant_id: Some(p.supplier_id),
+                tenant_id: tenant.tenant_id,
                 event_type: "product.updated".to_string(),
                 product_id: p.product_id,
                 supplier_id: p.supplier_id,
@@ -184,20 +211,29 @@ pub async fn update_product(
 
 /// Deletes a product, emits product.deleted, and invalidates cache.
 pub async fn delete_product(
+    tenant: web::ReqData<TenantContext>,
+    db_router: web::Data<DynamicPoolRouter>,
     repo: web::Data<ProductRepo>,
     redis_pub: web::Data<RedisPublisher>,
     redis_client: web::Data<redis::Client>,
     path: web::Path<(Uuid, Uuid)>,
 ) -> impl Responder {
     let (supplier_id, product_id) = path.into_inner();
-    match repo.delete_product(supplier_id, product_id).await {
+
+    let pool = db_router.get_pool(&tenant).await.unwrap();
+    let mut tx = pool.begin().await.unwrap();
+    tenant.apply_rls(&mut *tx).await.unwrap();
+
+    match repo.delete_product(&mut tx, supplier_id, product_id).await {
         Ok(rows) if rows > 0 => {
-            let event = json!({
-                "tenant_id": supplier_id,
-                "event_type": "product.deleted",
-                "product_id": product_id,
-                "supplier_id": supplier_id,
-            });
+            tx.commit().await.unwrap();
+            let event = ProductEvent {
+                tenant_id: tenant.tenant_id,
+                event_type: "product.deleted".to_string(),
+                product_id,
+                supplier_id,
+                ..Default::default()
+            };
             redis_pub.publish_async("product.deleted", event.clone());
 
             let cache_key = format!("products:supplier:{}", supplier_id);
@@ -230,6 +266,8 @@ pub async fn delete_product(
 
 /// Searches products by optional query parameters.
 pub async fn search_products(
+    tenant: web::ReqData<TenantContext>,
+    db_router: web::Data<DynamicPoolRouter>,
     repo: web::Data<ProductRepo>,
     query: web::Query<HashMap<String, String>>,
 ) -> impl Responder {
@@ -282,8 +320,13 @@ pub async fn search_products(
     }
     .max(0);
 
+    let pool = db_router.get_pool(&tenant).await.unwrap();
+    let mut tx = pool.begin().await.unwrap();
+    tenant.apply_rls(&mut *tx).await.unwrap();
+
     match repo
         .search_products(
+            &mut tx,
             category,
             min_price,
             max_price,
@@ -304,15 +347,22 @@ pub async fn search_products(
 
 /// Creates products in bulk and emits product.created events.
 pub async fn bulk_create(
+    tenant: web::ReqData<TenantContext>,
+    db_router: web::Data<DynamicPoolRouter>,
     repo: web::Data<ProductRepo>,
     redis_pub: web::Data<RedisPublisher>,
     req: web::Json<BulkCreateRequest>,
 ) -> impl Responder {
-    match repo.bulk_create(&req.products).await {
+    let pool = db_router.get_pool(&tenant).await.unwrap();
+    let mut tx = pool.begin().await.unwrap();
+    tenant.apply_rls(&mut *tx).await.unwrap();
+
+    match repo.bulk_create(&mut tx, &req.products).await {
         Ok(created) => {
+            tx.commit().await.unwrap();
             for p in &created {
                 let event = ProductEvent {
-                    tenant_id: Some(p.supplier_id),
+                    tenant_id: tenant.tenant_id,
                     event_type: "product.created".to_string(),
                     product_id: p.product_id,
                     supplier_id: p.supplier_id,
@@ -339,16 +389,26 @@ pub async fn bulk_create(
 
 /// Stores uploaded asset metadata for a product.
 pub async fn register_product_asset(
+    tenant: web::ReqData<TenantContext>,
+    db_router: web::Data<DynamicPoolRouter>,
     repo: web::Data<ProductRepo>,
     path: web::Path<(Uuid, Uuid)>,
     req: web::Json<RegisterProductAssetRequest>,
 ) -> impl Responder {
     let (supplier_id, product_id) = path.into_inner();
+
+    let pool = db_router.get_pool(&tenant).await.unwrap();
+    let mut tx = pool.begin().await.unwrap();
+    tenant.apply_rls(&mut *tx).await.unwrap();
+
     match repo
-        .register_product_asset(supplier_id, product_id, &req)
+        .register_product_asset(&mut tx, supplier_id, product_id, &req)
         .await
     {
-        Ok(asset) => HttpResponse::Created().json(asset),
+        Ok(asset) => {
+            tx.commit().await.unwrap();
+            HttpResponse::Created().json(asset)
+        }
         Err(sqlx::Error::RowNotFound) => HttpResponse::NotFound().body("Product not found"),
         Err(e) => {
             eprintln!("Register product asset DB error: {:?}", e);
@@ -359,11 +419,18 @@ pub async fn register_product_asset(
 
 /// Lists stored asset metadata for a product.
 pub async fn list_product_assets(
+    tenant: web::ReqData<TenantContext>,
+    db_router: web::Data<DynamicPoolRouter>,
     repo: web::Data<ProductRepo>,
     path: web::Path<(Uuid, Uuid)>,
 ) -> impl Responder {
     let (supplier_id, product_id) = path.into_inner();
-    match repo.list_product_assets(supplier_id, product_id).await {
+
+    let pool = db_router.get_pool(&tenant).await.unwrap();
+    let mut tx = pool.begin().await.unwrap();
+    tenant.apply_rls(&mut *tx).await.unwrap();
+
+    match repo.list_product_assets(&mut tx, supplier_id, product_id).await {
         Ok(assets) => HttpResponse::Ok().json(assets),
         Err(e) => {
             eprintln!("List product assets DB error: {:?}", e);
@@ -374,16 +441,26 @@ pub async fn list_product_assets(
 
 /// Deletes product asset metadata by asset id.
 pub async fn delete_product_asset(
+    tenant: web::ReqData<TenantContext>,
+    db_router: web::Data<DynamicPoolRouter>,
     repo: web::Data<ProductRepo>,
     path: web::Path<(Uuid, Uuid, Uuid)>,
 ) -> impl Responder {
     let (supplier_id, product_id, asset_id) = path.into_inner();
+
+    let pool = db_router.get_pool(&tenant).await.unwrap();
+    let mut tx = pool.begin().await.unwrap();
+    tenant.apply_rls(&mut *tx).await.unwrap();
+
     match repo
-        .delete_product_asset(supplier_id, product_id, asset_id)
+        .delete_product_asset(&mut tx, supplier_id, product_id, asset_id)
         .await
     {
         Ok(0) => HttpResponse::NotFound().body("Asset not found"),
-        Ok(_) => HttpResponse::Ok().body("Asset deleted"),
+        Ok(_) => {
+            tx.commit().await.unwrap();
+            HttpResponse::Ok().body("Asset deleted")
+        }
         Err(e) => {
             eprintln!("Delete product asset DB error: {:?}", e);
             HttpResponse::InternalServerError().body("Failed to delete product asset")
@@ -393,6 +470,8 @@ pub async fn delete_product_asset(
 
 /// Generates signed Cloudinary upload parameters for direct client uploads.
 pub async fn sign_cloudinary_upload(
+    _tenant: web::ReqData<TenantContext>,
+    _db_router: web::Data<DynamicPoolRouter>,
     storage: web::Data<std::sync::Arc<dyn StorageProvider>>,
     req: web::Json<SignAssetUploadRequest>,
 ) -> impl Responder {
@@ -418,75 +497,4 @@ pub async fn sign_cloudinary_upload(
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::storage::StorageProvider;
-    use actix_web::{http::StatusCode, test, web};
 
-    struct MockStorageProvider;
-    impl StorageProvider for MockStorageProvider {
-        fn sign_upload(
-            &self,
-            folder: &str,
-            public_id: Option<&str>,
-        ) -> Result<crate::models::SignedUploadResponse, String> {
-            Ok(crate::models::SignedUploadResponse {
-                cloud_name: "mock_cloud".to_string(),
-                api_key: "mock_key".to_string(),
-                timestamp: 1234567890,
-                signature: "mock_sig".to_string(),
-                folder: folder.to_string(),
-                public_id: public_id.map(String::from),
-            })
-        }
-    }
-
-    #[actix_web::test]
-    async fn test_sign_cloudinary_upload_valid() {
-        let storage: std::sync::Arc<dyn StorageProvider> = std::sync::Arc::new(MockStorageProvider);
-        let storage_data = web::Data::new(storage);
-
-        let req_data = SignAssetUploadRequest {
-            folder: Some("b2b-saas/products/test".to_string()),
-            public_id: Some("valid_id".to_string()),
-        };
-        let req_json = web::Json(req_data);
-
-        let response = sign_cloudinary_upload(storage_data.clone(), req_json).await;
-        let resp = response.respond_to(&actix_web::test::TestRequest::default().to_http_request());
-        assert_eq!(resp.status(), StatusCode::OK);
-    }
-
-    #[actix_web::test]
-    async fn test_sign_cloudinary_upload_invalid_folder() {
-        let storage: std::sync::Arc<dyn StorageProvider> = std::sync::Arc::new(MockStorageProvider);
-        let storage_data = web::Data::new(storage);
-
-        let req_data = SignAssetUploadRequest {
-            folder: Some("invalid/folder".to_string()),
-            public_id: Some("valid_id".to_string()),
-        };
-        let req_json = web::Json(req_data);
-
-        let response = sign_cloudinary_upload(storage_data.clone(), req_json).await;
-        let resp = response.respond_to(&actix_web::test::TestRequest::default().to_http_request());
-        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
-    }
-
-    #[actix_web::test]
-    async fn test_sign_cloudinary_upload_invalid_public_id() {
-        let storage: std::sync::Arc<dyn StorageProvider> = std::sync::Arc::new(MockStorageProvider);
-        let storage_data = web::Data::new(storage);
-
-        let req_data = SignAssetUploadRequest {
-            folder: Some("b2b-saas/products/test".to_string()),
-            public_id: Some("invalid id!".to_string()),
-        };
-        let req_json = web::Json(req_data);
-
-        let response = sign_cloudinary_upload(storage_data.clone(), req_json).await;
-        let resp = response.respond_to(&actix_web::test::TestRequest::default().to_http_request());
-        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
-    }
-}

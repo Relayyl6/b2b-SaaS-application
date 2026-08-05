@@ -5,11 +5,13 @@ use sqlx::PgPool;
 use uuid::Uuid;
 
 use crate::redis_pub::RedisPublisher;
+use platform::tenant::TenantContext;
 
 use crate::models::{CreateOrderRequest, Order, OrderEvent, OrderStatus, UpdateOrderStatus};
 
 #[post("/orders")]
 pub async fn create_order(
+    tenant: web::ReqData<TenantContext>,
     pool: web::Data<PgPool>,
     redis_pub: web::Data<RedisPublisher>,
     req: web::Json<CreateOrderRequest>,
@@ -21,10 +23,19 @@ pub async fn create_order(
     // adjust timing, configurable to add flexibility for when the customer is able to pay
     let expires_at = Utc::now() + Duration::seconds(2 * 24 * 60 * 60);
 
+    let mut tx = match pool.begin().await {
+        Ok(t) => t,
+        Err(_) => return HttpResponse::InternalServerError().json(json!({"error": "Failed to start transaction"})),
+    };
+
+    if let Err(_) = tenant.apply_rls(&mut *tx).await {
+        return HttpResponse::InternalServerError().json(json!({"error": "Failed to apply RLS"}));
+    }
+
     let result = sqlx::query_as::<_, Order>(
         r#"
-            INSERT INTO orders (id, user_id, supplier_id, product_id, items, qty, status, expires_at, order_timestamp, version)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 1)
+            INSERT INTO orders (id, user_id, supplier_id, product_id, items, qty, status, expires_at, order_timestamp, version, tenant_id)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 1, $10)
             RETURNING *
         "#
     )
@@ -37,13 +48,16 @@ pub async fn create_order(
     .bind(status)
     .bind(expires_at)
     .bind(order_timestamp)
-    .fetch_one(pool.get_ref())
+    .bind(tenant.tenant_id)
+    .fetch_one(&mut *tx)
     .await;
+
+    let _ = tx.commit().await;
 
     match result {
         Ok(order) => {
             let event = OrderEvent {
-                tenant_id: Some(order.supplier_id),
+                tenant_id: Some(order.tenant_id),
                 event_type: "order.created".to_string(),
                 product_id: order.product_id,
                 supplier_id: order.supplier_id,
@@ -85,8 +99,22 @@ pub async fn create_order(
 }
 
 #[get("/orders/{id}")]
-pub async fn get_order(pool: web::Data<PgPool>, path: web::Path<Uuid>) -> HttpResponse {
+pub async fn get_order(
+    tenant: web::ReqData<TenantContext>,
+    pool: web::Data<PgPool>,
+    path: web::Path<Uuid>
+) -> HttpResponse {
     let order_id = path.into_inner();
+    
+    let mut tx = match pool.begin().await {
+        Ok(t) => t,
+        Err(_) => return HttpResponse::InternalServerError().json(json!({"error": "Failed to start transaction"})),
+    };
+
+    if let Err(_) = tenant.apply_rls(&mut *tx).await {
+        return HttpResponse::InternalServerError().json(json!({"error": "Failed to apply RLS"}));
+    }
+
     let result = sqlx::query_as::<_, Order>(
         r#"
             SELECT *
@@ -95,8 +123,10 @@ pub async fn get_order(pool: web::Data<PgPool>, path: web::Path<Uuid>) -> HttpRe
         "#,
     )
     .bind(order_id)
-    .fetch_one(pool.get_ref())
+    .fetch_one(&mut *tx)
     .await;
+
+    let _ = tx.commit().await;
 
     match result {
         Ok(order) => HttpResponse::Ok().json(order),
@@ -106,6 +136,7 @@ pub async fn get_order(pool: web::Data<PgPool>, path: web::Path<Uuid>) -> HttpRe
 
 #[put("/orders/{id}/status")]
 pub async fn update_status(
+    tenant: web::ReqData<TenantContext>,
     pool: web::Data<PgPool>,
     path: web::Path<Uuid>,
     redis_pub: web::Data<RedisPublisher>,
@@ -121,6 +152,15 @@ pub async fn update_status(
     let product_id = req.product_id.unwrap_or(Uuid::new_v4());
 
     // Update status and return the final updated status
+    let mut tx = match pool.begin().await {
+        Ok(t) => t,
+        Err(_) => return HttpResponse::InternalServerError().json(json!({"error": "Failed to start transaction"})),
+    };
+
+    if let Err(_) = tenant.apply_rls(&mut *tx).await {
+        return HttpResponse::InternalServerError().json(json!({"error": "Failed to apply RLS"}));
+    }
+
     let result = sqlx::query_as::<_, Order>(
         r#"
             UPDATE orders
@@ -152,7 +192,7 @@ pub async fn update_status(
     .bind(product_id)
     .bind(user_id)
     .bind(req.expected_version)
-    .fetch_one(pool.get_ref())
+    .fetch_one(&mut *tx)
     .await;
 
     match result {
@@ -161,19 +201,22 @@ pub async fn update_status(
             let audit_id = Uuid::new_v4();
             let new_status_str = serde_json::to_string(&order.status).unwrap().replace("\"", "");
             let _ = sqlx::query(
-                "INSERT INTO order_audit_logs (id, order_id, previous_status, new_status, changed_at) VALUES ($1, $2, $3, $4, NOW())"
+                "INSERT INTO order_audit_logs (id, tenant_id, order_id, previous_status, new_status, changed_at) VALUES ($1, $2, $3, $4, $5, NOW())"
             )
             .bind(audit_id)
+            .bind(tenant.tenant_id)
             .bind(order.id)
             .bind::<Option<String>>(None)
             .bind(&new_status_str)
-            .execute(pool.get_ref())
+            .execute(&mut *tx)
             .await;
+            
+            let _ = tx.commit().await;
 
             match order.status {
                 OrderStatus::Failed => {
                     let fail_event = OrderEvent {
-                        tenant_id: Some(order.supplier_id),
+                        tenant_id: Some(order.tenant_id),
                         event_type: "order.failed".to_string(),
                         product_id: order.product_id,
                         supplier_id: order.supplier_id,
@@ -196,7 +239,7 @@ pub async fn update_status(
 
                 OrderStatus::Confirmed => {
                     let conf_event = OrderEvent {
-                        tenant_id: Some(order.supplier_id),
+                        tenant_id: Some(order.tenant_id),
                         event_type: "order.confirmed".to_string(),
                         product_id: order.product_id,
                         supplier_id: order.supplier_id,
@@ -216,7 +259,7 @@ pub async fn update_status(
 
                 OrderStatus::Cancelled => {
                     let cancel_event = OrderEvent {
-                        tenant_id: Some(order.supplier_id),
+                        tenant_id: Some(order.tenant_id),
                         event_type: "order.cancelled".to_string(),
                         product_id: order.product_id,
                         supplier_id: order.supplier_id,
@@ -244,7 +287,7 @@ pub async fn update_status(
                         .await;
 
                     let review_cmd = OrderEvent {
-                        tenant_id: Some(order.supplier_id),
+                        tenant_id: Some(order.tenant_id),
                         event_type: "order.review_requested".to_string(),
                         product_id: order.product_id,
                         supplier_id: order.supplier_id,
@@ -265,7 +308,7 @@ pub async fn update_status(
 
                 OrderStatus::Pending => {
                     let pending_event = OrderEvent {
-                        tenant_id: Some(order.supplier_id),
+                        tenant_id: Some(order.tenant_id),
                         event_type: "order.pending".to_string(),
                         product_id: order.product_id,
                         supplier_id: order.supplier_id,
@@ -280,7 +323,7 @@ pub async fn update_status(
 
                 OrderStatus::Shipped => {
                     let shipped_event = OrderEvent {
-                        tenant_id: Some(order.supplier_id),
+                        tenant_id: Some(order.tenant_id),
                         event_type: "order.shipped".to_string(),
                         product_id: order.product_id,
                         supplier_id: order.supplier_id,
@@ -296,7 +339,7 @@ pub async fn update_status(
 
                 OrderStatus::Refunded => {
                     let refunded_event = OrderEvent {
-                        tenant_id: Some(order.supplier_id),
+                        tenant_id: Some(order.tenant_id),
                         event_type: "order.refunded".to_string(),
                         product_id: order.product_id,
                         supplier_id: order.supplier_id,
@@ -312,7 +355,7 @@ pub async fn update_status(
 
                 OrderStatus::Processing => {
                     let proc_event = OrderEvent {
-                        tenant_id: Some(order.supplier_id),
+                        tenant_id: Some(order.tenant_id),
                         event_type: "order.processing".to_string(),
                         product_id: order.product_id,
                         supplier_id: order.supplier_id,
@@ -351,16 +394,29 @@ pub async fn update_status(
 
 #[delete("/orders/{id}/{user_id}")]
 pub async fn delete_order(
+    tenant: web::ReqData<TenantContext>,
     _redis_pub: web::Data<RedisPublisher>,
     pool: web::Data<PgPool>,
     path: web::Path<(Uuid, Uuid)>,
 ) -> HttpResponse {
     let (order_id, user_id) = path.into_inner();
+    
+    let mut tx = match pool.begin().await {
+        Ok(t) => t,
+        Err(_) => return HttpResponse::InternalServerError().json(json!({"error": "Failed to start transaction"})),
+    };
+
+    if let Err(_) = tenant.apply_rls(&mut *tx).await {
+        return HttpResponse::InternalServerError().json(json!({"error": "Failed to apply RLS"}));
+    }
+
     let result = sqlx::query("DELETE FROM orders WHERE id = $1 AND user_id = $2")
         .bind(order_id)
         .bind(user_id)
-        .execute(pool.get_ref())
+        .execute(&mut *tx)
         .await;
+        
+    let _ = tx.commit().await;
 
     match result {
         Ok(row) if row.rows_affected() > 0 => {

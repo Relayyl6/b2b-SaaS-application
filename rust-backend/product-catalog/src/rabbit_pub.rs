@@ -70,12 +70,10 @@ pub async fn publish_example_event(ev: &ProductEvent) -> Result<(), PublishError
     let payload = serde_json::to_vec(&ev)?;
 
     let mut headers = FieldTable::default();
-    if let Some(tenant_id) = ev.tenant_id {
-        headers.insert(
-            "x-tenant-id".into(),
-            lapin::types::AMQPValue::LongString(tenant_id.to_string().into()),
-        );
-    }
+    headers.insert(
+        "x-tenant-id".into(),
+        lapin::types::AMQPValue::LongString(ev.tenant_id.to_string().into()),
+    );
 
     let confirm = timeout(
         Duration::from_secs(2),

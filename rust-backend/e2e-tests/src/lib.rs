@@ -17,6 +17,10 @@ pub struct TestHarness {
 
 impl TestHarness {
     pub async fn new() -> Self {
+        // Load .env file so REDIS_URL, DATABASE_URL etc. are available during tests.
+        // It's OK if the file doesn't exist (e.g. in CI with real env vars set).
+        let _ = dotenvy::dotenv();
+
         let db_url = env::var("DATABASE_URL")
             .unwrap_or_else(|_| "postgres://postgres:postgres@127.0.0.1:5432/orders".to_string());
         let redis_url =

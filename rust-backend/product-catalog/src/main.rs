@@ -33,7 +33,8 @@ async fn main() -> std::io::Result<()> {
         .await
         .expect("Migrations failed");
 
-    let repo = web::Data::new(ProductRepo::new(pool));
+    let db_router = web::Data::new(platform::db_router::DynamicPoolRouter::new(pool.clone()));
+    let repo = web::Data::new(ProductRepo::new());
     let redis_pub = match &redis_url {
         Some(url) => match RedisPublisher::new(url).await {
             Ok(pubw) => web::Data::new(pubw),
@@ -68,7 +69,11 @@ async fn main() -> std::io::Result<()> {
 
     HttpServer::new(move || {
         App::new()
+            .wrap(
+                platform::middleware::tenant_middleware::TenantAuthMiddleware::with_redis(redis_client.get_ref().clone()),
+            )
             .app_data(repo.clone())
+            .app_data(db_router.clone())
             .app_data(redis_pub.clone())
             .app_data(redis_client.clone())
             .app_data(web::Data::new(storage.clone()))

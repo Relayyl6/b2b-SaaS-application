@@ -8,19 +8,24 @@ use uuid::Uuid;
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct ProductDeletedEvent {
+    pub tenant_id: Uuid,
     pub product_id: Uuid,
     pub supplier_id: Uuid,
     pub deleted: bool,
 }
 
 pub async fn get_inventory(
-    repo: web::Data<InventoryRepo>,
+    tenant: web::ReqData<platform::tenant::TenantContext>,
+    db_router: web::Data<platform::db_router::DynamicPoolRouter>,
     path: web::Path<Uuid>,
 ) -> impl Responder {
     let supplier_id = path.into_inner();
-    match repo.get_by_supplier(supplier_id).await {
+    let pool = db_router.get_pool(&tenant).await.unwrap();
+    let mut tx = pool.begin().await.unwrap();
+    tenant.apply_rls(&mut *tx).await.unwrap();
+
+    match InventoryRepo::get_by_supplier(&mut *tx, supplier_id).await {
         Ok(items) => HttpResponse::Ok().json(items),
-        // Err(_) => HttpResponse::InternalServerError().body("DB error"),
         Err(e) => {
             eprintln!("DB ERROR: {:?}", e);
             HttpResponse::InternalServerError().body(format!("DB error: {:?}", e))
@@ -29,11 +34,19 @@ pub async fn get_inventory(
 }
 
 pub async fn create_inventory(
-    repo: web::Data<InventoryRepo>,
+    tenant: web::ReqData<platform::tenant::TenantContext>,
+    db_router: web::Data<platform::db_router::DynamicPoolRouter>,
     req: web::Json<CreateInventoryRequest>,
 ) -> impl Responder {
-    match repo.create_inventory_item(&req).await {
-        Ok(item) => HttpResponse::Created().json(item),
+    let pool = db_router.get_pool(&tenant).await.unwrap();
+    let mut tx = pool.begin().await.unwrap();
+    tenant.apply_rls(&mut *tx).await.unwrap();
+
+    match InventoryRepo::create_inventory_item(&mut *tx, &req).await {
+        Ok(item) => {
+            tx.commit().await.unwrap();
+            HttpResponse::Created().json(item)
+        }
         Err(err) => {
             eprintln!("Error creating inventory item: {:?}", err);
             HttpResponse::InternalServerError().body("Failed to create inventory item")
@@ -42,12 +55,17 @@ pub async fn create_inventory(
 }
 
 pub async fn get_inventory_item(
-    repo: web::Data<InventoryRepo>,
+    tenant: web::ReqData<platform::tenant::TenantContext>,
+    db_router: web::Data<platform::db_router::DynamicPoolRouter>,
     path: web::Path<(Uuid, Uuid)>,
 ) -> impl Responder {
     let (supplier_id, product_id) = path.into_inner();
 
-    match repo.get_one(supplier_id, product_id).await {
+    let pool = db_router.get_pool(&tenant).await.unwrap();
+    let mut tx = pool.begin().await.unwrap();
+    tenant.apply_rls(&mut *tx).await.unwrap();
+
+    match InventoryRepo::get_one(&mut *tx, supplier_id, product_id).await {
         Ok(item) => HttpResponse::Ok().json(item),
         Err(sqlx::Error::RowNotFound) => {
             HttpResponse::NotFound().body("Product not found for this supplier.")
@@ -60,7 +78,8 @@ pub async fn get_inventory_item(
 }
 
 pub async fn update_stock(
-    repo: web::Data<InventoryRepo>,
+    tenant: web::ReqData<platform::tenant::TenantContext>,
+    db_router: web::Data<platform::db_router::DynamicPoolRouter>,
     redis_pub: web::Data<RedisPublisher>,
     redis_client: web::Data<redis::Client>,
     path: web::Path<Uuid>,
@@ -69,13 +88,18 @@ pub async fn update_stock(
     let supplier_id = path.into_inner();
     let change = req.quantity_change;
 
-    match repo.update_stock(supplier_id, &req).await {
+    let pool = db_router.get_pool(&tenant).await.unwrap();
+    let mut tx = pool.begin().await.unwrap();
+    tenant.apply_rls(&mut *tx).await.unwrap();
+
+    match InventoryRepo::update_stock(&mut *tx, supplier_id, &req).await {
         Ok(inventory) => {
+            tx.commit().await.unwrap();
             let low_stock = inventory.quantity <= inventory.low_stock_threshold;
 
             // Expanded event payload to reflect possible new product fields
             let event = StockUpdateEvent {
-                tenant_id: Some(inventory.supplier_id),
+                tenant_id: tenant.tenant_id,
                 product_id: inventory.product_id,
                 supplier_id: inventory.supplier_id,
                 new_quantity: inventory.quantity,
@@ -90,13 +114,9 @@ pub async fn update_stock(
             };
 
             // Publish to Redis channels
-            if let Err(e) = redis_pub.publish("inventory.updated", &event).await {
-                eprintln!("Redis publish error (updated): {}", e);
-            }
+            redis_pub.publish_async("inventory.updated", event.clone());
             if low_stock {
-                if let Err(e) = redis_pub.publish("inventory.lowstock", &event).await {
-                    eprintln!("Redis publish error (lowstock): {}", e);
-                }
+                redis_pub.publish_async("inventory.lowstock", event.clone());
             }
 
             // Invalidate cache for this supplier
@@ -121,17 +141,24 @@ pub async fn update_stock(
 }
 
 pub async fn delete_product(
-    repo: web::Data<InventoryRepo>,
+    tenant: web::ReqData<platform::tenant::TenantContext>,
+    db_router: web::Data<platform::db_router::DynamicPoolRouter>,
     redis_pub: web::Data<RedisPublisher>,
     redis_client: web::Data<redis::Client>,
     path: web::Path<(Uuid, Uuid)>, // supplier_id and product_id
 ) -> impl Responder {
     let (supplier_id, product_id) = path.into_inner();
 
-    match repo.delete_product(supplier_id, product_id).await {
+    let pool = db_router.get_pool(&tenant).await.unwrap();
+    let mut tx = pool.begin().await.unwrap();
+    tenant.apply_rls(&mut *tx).await.unwrap();
+
+    match InventoryRepo::delete_product(&mut *tx, supplier_id, product_id).await {
         Ok(rows_affected) if rows_affected > 0 => {
+            tx.commit().await.unwrap();
             // Publish deletion event
             let event = ProductDeletedEvent {
+                tenant_id: tenant.tenant_id,
                 product_id,
                 supplier_id,
                 deleted: true,

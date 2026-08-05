@@ -4,9 +4,9 @@ services:
   postgres:
     image: postgres:17
     environment:
-      POSTGRES_USER: ${POSTGRES_USER}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
-      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: ${POSTGRES_DB:-caas_db}
     ports:
       - "5432:5432"
     volumes:
@@ -29,7 +29,7 @@ services:
       dockerfile: rust-backend/inventory-management/Dockerfile
     environment:
       DATABASE_URL: ${DATABASE_URL}
-      REDIS_URL: redis://127.0.0.1:6379
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379}
       SERVICE_PORT: 3005
       AMQP_ADDR: ${AMQP_ADDR}
     depends_on:
@@ -45,7 +45,7 @@ services:
       dockerfile: rust-backend/notifications/Dockerfile
     environment:
       DATABASE_URL: ${DATABASE_URL}
-      REDIS_URL: redis://127.0.0.1:6379
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379}
       SERVICE_PORT: 3009
       AMQP_ADDR: ${AMQP_ADDR}
     depends_on:
@@ -61,7 +61,7 @@ services:
       dockerfile: rust-backend/user-management/Dockerfile
     environment:
       DATABASE_URL: ${DATABASE_URL}
-      REDIS_URL: redis://127.0.0.1:6379
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379}
       SERVICE_PORT: 3005
       AMQP_ADDR: ${AMQP_ADDR}
     depends_on:
@@ -77,7 +77,7 @@ services:
       dockerfile: rust-backend/product-catalog/Dockerfile
     environment:
       DATABASE_URL: ${DATABASE_URL}
-      REDIS_URL: redis://127.0.0.1:6379
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379}
       SERVICE_PORT: 3003
       AMQP_ADDR: ${AMQP_ADDR}
     depends_on:
@@ -93,7 +93,7 @@ services:
       dockerfile: rust-backend/order-service/Dockerfile
     environment:
       DATABASE_URL: ${DATABASE_URL}
-      REDIS_URL: redis://127.0.0.1:6379
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379}
       PORT: 3005
       HOST: 0.0.0.0
     depends_on:
@@ -108,7 +108,7 @@ services:
       dockerfile: rust-backend/logistics/Dockerfile
     environment:
       DATABASE_URL: ${DATABASE_URL}
-      REDIS_URL: redis://127.0.0.1:6379
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379}
       SERVICE_PORT: 3008
       AMQP_ADDR: ${AMQP_ADDR}
     depends_on:
@@ -124,7 +124,7 @@ services:
       dockerfile: rust-backend/analytics/Dockerfile
     environment:
       DATABASE_URL: ${DATABASE_URL}
-      REDIS_URL: redis://127.0.0.1:6379
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379}
       SERVICE_PORT: 3007
       AMQP_ADDR: ${AMQP_ADDR}
     depends_on:
@@ -133,6 +133,50 @@ services:
       - rabbitmq
     ports:
       - "3007:3007"
+
+  tenant-management:
+    build:
+      context: .
+      dockerfile: rust-backend/tenant-management/Dockerfile
+    environment:
+      CONTROL_PLANE_DATABASE_URL: ${CONTROL_PLANE_DATABASE_URL}
+      TENANT_MANAGEMENT_PORT: 3000
+    depends_on:
+      - postgres
+    ports:
+      - "3000:3000"
+
+  supplier-management:
+    build:
+      context: .
+      dockerfile: rust-backend/supplier-management/Dockerfile
+    environment:
+      DATABASE_URL: ${DATABASE_URL}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379}
+      SERVICE_PORT: 3011
+      AMQP_ADDR: ${AMQP_ADDR}
+    depends_on:
+      - postgres
+      - redis
+      - rabbitmq
+    ports:
+      - "3011:3011"
+
+  payments:
+    build:
+      context: .
+      dockerfile: rust-backend/payments/Dockerfile
+    environment:
+      DATABASE_URL: ${DATABASE_URL}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379}
+      SERVICE_PORT: 3010
+      STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY}
+      STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET}
+    depends_on:
+      - postgres
+      - redis
+    ports:
+      - "3010:3010"
 
   api-gateway:
     image: nginx:1.27
@@ -146,6 +190,9 @@ services:
       - inventory-management
       - user-management
       - notifications
+      - tenant-management
+      - supplier-management
+      - payments
     ports:
       - "8080:8080"
 

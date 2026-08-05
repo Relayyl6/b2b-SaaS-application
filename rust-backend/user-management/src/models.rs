@@ -28,6 +28,7 @@ pub enum UserRole {
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct SignUpRequest {
+    pub tenant_id: Option<Uuid>,
     pub email: String,
     pub password: String,
     pub full_name: String,
@@ -36,6 +37,7 @@ pub struct SignUpRequest {
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct SignInRequest {
+    pub tenant_id: Option<Uuid>,
     pub email: String,
     pub password: String,
 }

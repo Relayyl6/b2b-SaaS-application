@@ -37,7 +37,7 @@ pub struct UpdateStockRequest {
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct StockUpdateEvent {
-    pub tenant_id: Option<Uuid>,
+    pub tenant_id: Uuid,
     pub product_id: Uuid,
     pub supplier_id: Uuid,
     pub new_quantity: i32,

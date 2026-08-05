@@ -43,15 +43,17 @@ impl AnalyticsEvent {
 impl Event {
     pub fn new(event: AnalyticsEvent) -> Result<Event, EventError> {
         let id = event.extract_primary_id();
+        let tenant_id = event.tenant_id;
 
         let data =
             serde_json::to_value(&event).map_err(|e| EventError::ConversionError(e.to_string()))?;
 
         Ok(Event {
+            id: Some(id),
+            tenant_id,
             event_type: event.event_type,
             event_timestamp: Some(event.timestamp.unwrap_or(Utc::now())),
             data,
-            id: Some(id),
         })
     }
 }

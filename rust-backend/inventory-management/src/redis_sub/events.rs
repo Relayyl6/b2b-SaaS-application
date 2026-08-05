@@ -3,6 +3,7 @@ use crate::redis_pub::RedisPublisher;
 use crate::db::InventoryRepo;
 use actix_web::web;
 use chrono::{Duration, Utc};
+use platform::tenant::{AuthMethod, PricingTier, TenantContext};
 use sqlx::PgPool;
 use uuid::Uuid;
 
@@ -10,7 +11,11 @@ pub async fn create_product_from_event(
     pool: &PgPool,
     event: ProductEvent,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let repo = InventoryRepo::new(pool);
+    let tenant_id = event.tenant_id.unwrap_or(event.supplier_id);
+    let ctx = TenantContext::new(tenant_id, event.user_id, PricingTier::Free, vec![], AuthMethod::ApiKey);
+    let mut tx = pool.begin().await?;
+    ctx.apply_rls(&mut *tx).await?;
+
     let req = CreateInventoryRequest {
         supplier_id: event.supplier_id,
         product_id: event.product_id,
@@ -23,8 +28,11 @@ pub async fn create_product_from_event(
         unit: event.unit.unwrap_or_else(|| "unit".to_string()),
     };
 
-    match repo.create_inventory_item(&req).await {
-        Ok(_) => println!("✅({}) Created product {:?} via Repo", event.event_type, req.name),
+    match InventoryRepo::create_inventory_item(&mut *tx, &req).await {
+        Ok(_) => {
+            tx.commit().await?;
+            println!("✅({}) Created product {:?} via Repo", event.event_type, req.name);
+        }
         Err(e) => eprintln!("❌ Failed to create product: {:?}", e),
     }
     Ok(())
@@ -34,7 +42,11 @@ pub async fn update_product_from_event(
     pool: &PgPool,
     event: ProductEvent,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let repo = InventoryRepo::new(pool);
+    let tenant_id = event.tenant_id.unwrap_or(event.supplier_id);
+    let ctx = TenantContext::new(tenant_id, event.user_id, PricingTier::Free, vec![], AuthMethod::ApiKey);
+    let mut tx = pool.begin().await?;
+    ctx.apply_rls(&mut *tx).await?;
+
     let req = UpdateStockRequest {
         product_id: event.product_id,
         name: event.name,
@@ -49,8 +61,11 @@ pub async fn update_product_from_event(
         reserved: None,
     };
 
-    match repo.update_stock(event.supplier_id, &req).await {
-        Ok(_) => println!("🔁({}) Updated product {:?} via Repo", event.event_type, req.name),
+    match InventoryRepo::update_stock(&mut *tx, event.supplier_id, &req).await {
+        Ok(_) => {
+            tx.commit().await?;
+            println!("🔁({}) Updated product {:?} via Repo", event.event_type, req.name);
+        }
         Err(e) => eprintln!("❌ Failed to update product: {:?}", e),
     }
     Ok(())
@@ -60,9 +75,16 @@ pub async fn delete_product_from_event(
     pool: &PgPool,
     event: ProductEvent,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let repo = InventoryRepo::new(pool);
-    match repo.delete_product(event.supplier_id, event.product_id).await {
-        Ok(_) => println!("🗑️({}) Deleted product {} via Repo", event.event_type, event.product_id),
+    let tenant_id = event.tenant_id.unwrap_or(event.supplier_id);
+    let ctx = TenantContext::new(tenant_id, event.user_id, PricingTier::Free, vec![], AuthMethod::ApiKey);
+    let mut tx = pool.begin().await?;
+    ctx.apply_rls(&mut *tx).await?;
+
+    match InventoryRepo::delete_product(&mut *tx, event.supplier_id, event.product_id).await {
+        Ok(_) => {
+            tx.commit().await?;
+            println!("🗑️({}) Deleted product {} via Repo", event.event_type, event.product_id);
+        }
         Err(e) => eprintln!("❌ Failed to delete product: {:?}", e),
     }
     Ok(())
@@ -73,7 +95,11 @@ pub async fn reserve_stock_from_order(
     redis_pub: web::Data<RedisPublisher>,
     event: ProductEvent,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let tenant_id = event.tenant_id.unwrap_or(event.supplier_id);
+    let ctx = TenantContext::new(tenant_id, event.user_id, PricingTier::Free, vec![], AuthMethod::ApiKey);
+
     let mut tx_expired = pool.begin().await?;
+    ctx.apply_rls(&mut *tx_expired).await?;
 
     let expired_reservations = sqlx::query_as::<_, ExpiredReservationRow>(
         r#"
@@ -143,6 +169,7 @@ pub async fn reserve_stock_from_order(
 
     // Atomically check & reserve stock
     let mut tx = pool.begin().await?;
+    ctx.apply_rls(&mut *tx).await?;
 
     // let existing: Option<(Uuid, i32)> = //
 
@@ -273,7 +300,10 @@ pub async fn release_stock_from_order(
     let order_id = event.order_id.unwrap_or(Uuid::new_v4());
     let qty = event.quantity.unwrap_or(0);
 
+    let tenant_id = event.tenant_id.unwrap_or(event.supplier_id);
+    let ctx = TenantContext::new(tenant_id, event.user_id, PricingTier::Free, vec![], AuthMethod::ApiKey);
     let mut tx = pool.begin().await?;
+    ctx.apply_rls(&mut *tx).await?;
 
     // Check reservation exists and amount is ok
     let res_row = sqlx::query_as::<_, ReservationRow>(
@@ -364,7 +394,7 @@ pub async fn release_stock_from_order(
 pub async fn finalize_order_after_payment(
     pool: &PgPool,
     redis_pub: web::Data<RedisPublisher>,
-    repo: web::Data<InventoryRepo>,
+    _repo: web::Data<InventoryRepo>,
     supplier_id: Uuid,
     event: ProductEvent,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
@@ -372,7 +402,10 @@ pub async fn finalize_order_after_payment(
     let qty = event.quantity.unwrap_or(0);
     let product_id = event.product_id;
 
+    let tenant_id = event.tenant_id.unwrap_or(supplier_id);
+    let ctx = TenantContext::new(tenant_id, event.user_id, PricingTier::Free, vec![], AuthMethod::ApiKey);
     let mut tx = pool.begin().await?;
+    ctx.apply_rls(&mut *tx).await?;
 
     // Fetch reservation
     let res_row = sqlx::query_as::<_, ReservationRow>(

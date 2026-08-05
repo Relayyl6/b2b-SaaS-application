@@ -4,7 +4,10 @@ mod models;
 
 use actix_web::{web, App, HttpServer};
 use dotenvy::dotenv;
+use platform::db_router::DynamicPoolRouter;
+use platform::middleware::tenant_middleware::TenantAuthMiddleware;
 use platform::{metrics, observability, streams::StreamPublisher};
+use redis::Client;
 use sqlx::postgres::PgPoolOptions;
 use std::env;
 
@@ -17,7 +20,8 @@ async fn main() -> std::io::Result<()> {
     metrics::init_metrics("supplier-management");
 
     let database_url = env::var("DATABASE_URL").expect("DATABASE_URL must be set");
-    let redis_url = env::var("REDIS_URL").ok();
+    let redis_url_str = env::var("REDIS_URL").unwrap_or_else(|_| "redis://127.0.0.1:6379".to_string());
+    let redis_client = Client::open(redis_url_str.as_str()).expect("invalid REDIS_URL");
     let port = env::var("SERVICE_PORT")
         .or_else(|_| env::var("PORT"))
         .unwrap_or_else(|_| "3011".to_string());
@@ -32,14 +36,16 @@ async fn main() -> std::io::Result<()> {
         .await
         .expect("migrations failed");
 
-    let repo = web::Data::new(SupplierRepo::new(pool));
-    let publisher = web::Data::new(match redis_url {
-        Some(url) => StreamPublisher::new(&url).unwrap_or_else(|_| StreamPublisher::noop()),
-        None => StreamPublisher::noop(),
-    });
+    let repo = web::Data::new(SupplierRepo::new());
+    let db_router = web::Data::new(DynamicPoolRouter::new(pool.clone()));
+    let publisher = web::Data::new(
+        StreamPublisher::new(&redis_url_str).unwrap_or_else(|_| StreamPublisher::noop()),
+    );
 
     HttpServer::new(move || {
         App::new()
+            .wrap(TenantAuthMiddleware::with_redis(redis_client.clone()))
+            .app_data(db_router.clone())
             .app_data(repo.clone())
             .app_data(publisher.clone())
             .route("/health", web::get().to(handlers::health))

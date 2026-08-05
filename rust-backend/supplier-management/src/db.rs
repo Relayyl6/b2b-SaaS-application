@@ -1,18 +1,15 @@
 use crate::models::{CreateSupplierRequest, Supplier, SupplierStatus, UpdateSupplierRequest};
-use sqlx::PgPool;
 use uuid::Uuid;
 
 #[derive(Clone)]
-pub struct SupplierRepo {
-    pool: PgPool,
-}
+pub struct SupplierRepo {}
 
 impl SupplierRepo {
-    pub fn new(pool: PgPool) -> Self {
-        Self { pool }
+    pub fn new() -> Self {
+        Self {}
     }
 
-    pub async fn create(&self, req: &CreateSupplierRequest) -> Result<Supplier, sqlx::Error> {
+    pub async fn create(&self, tx: &mut sqlx::Transaction<'_, sqlx::Postgres>, req: &CreateSupplierRequest) -> Result<Supplier, sqlx::Error> {
         sqlx::query_as::<_, Supplier>(
             r#"
             INSERT INTO suppliers (owner_user_id, legal_name, display_name, tax_id, country, metadata, platform_fee_percent)
@@ -27,28 +24,29 @@ impl SupplierRepo {
         .bind(&req.country)
         .bind(req.metadata.as_ref())
         .bind(req.platform_fee_percent.unwrap_or(5.0))
-        .fetch_one(&self.pool)
+        .fetch_one(&mut **tx)
         .await
     }
 
-    pub async fn get(&self, id: Uuid) -> Result<Supplier, sqlx::Error> {
+    pub async fn get(&self, tx: &mut sqlx::Transaction<'_, sqlx::Postgres>, id: Uuid) -> Result<Supplier, sqlx::Error> {
         sqlx::query_as::<_, Supplier>("SELECT * FROM suppliers WHERE id = $1")
             .bind(id)
-            .fetch_one(&self.pool)
+            .fetch_one(&mut **tx)
             .await
     }
 
-    pub async fn list_by_owner(&self, owner_user_id: Uuid) -> Result<Vec<Supplier>, sqlx::Error> {
+    pub async fn list_by_owner(&self, tx: &mut sqlx::Transaction<'_, sqlx::Postgres>, owner_user_id: Uuid) -> Result<Vec<Supplier>, sqlx::Error> {
         sqlx::query_as::<_, Supplier>(
             "SELECT * FROM suppliers WHERE owner_user_id = $1 ORDER BY created_at DESC",
         )
         .bind(owner_user_id)
-        .fetch_all(&self.pool)
+        .fetch_all(&mut **tx)
         .await
     }
 
     pub async fn update_status(
         &self,
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
         id: Uuid,
         owner_user_id: Uuid,
         status: SupplierStatus,
@@ -59,12 +57,13 @@ impl SupplierRepo {
         .bind(status)
         .bind(id)
         .bind(owner_user_id)
-        .fetch_one(&self.pool)
+        .fetch_one(&mut **tx)
         .await
     }
 
     pub async fn update_supplier(
         &self,
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
         id: Uuid,
         owner_user_id: Uuid,
         req: &UpdateSupplierRequest,
@@ -92,7 +91,7 @@ impl SupplierRepo {
         .bind(req.metadata.as_ref())
         .bind(id)
         .bind(owner_user_id)
-        .fetch_one(&self.pool)
+        .fetch_one(&mut **tx)
         .await
     }
 }

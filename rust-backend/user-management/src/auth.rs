@@ -85,9 +85,10 @@ pub fn create_jwt_with_tenant(
     Ok((access_token, refresh_token))
 }
 
-pub async fn user_exists(pool: &PgPool, email: &str) -> Result<bool, sqlx::Error> {
-    let row = sqlx::query_scalar::<_, i64>("SELECT 1 FROM users WHERE email = $1")
+pub async fn user_exists(pool: &PgPool, email: &str, tenant_id: Uuid) -> Result<bool, sqlx::Error> {
+    let row = sqlx::query_scalar::<_, i64>("SELECT 1 FROM users WHERE email = $1 AND tenant_id = $2")
         .bind(email)
+        .bind(tenant_id)
         .fetch_optional(pool)
         .await?;
 

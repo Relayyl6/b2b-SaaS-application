@@ -12,6 +12,8 @@ use dotenvy::dotenv;
 use redis::Client;
 use sqlx::postgres::PgPoolOptions;
 use std::env;
+use platform::middleware::tenant_middleware::TenantAuthMiddleware;
+use platform::db_router::DynamicPoolRouter;
 use tokio::spawn;
 use tracing::{error, subscriber};
 use tracing_subscriber::FmtSubscriber;
@@ -57,6 +59,7 @@ async fn main() -> std::io::Result<()> {
     };
 
     let repo = web::Data::new(AnalyticsRepo::new(&pool));
+    let db_router = web::Data::new(DynamicPoolRouter::new(pool.clone()));
 
     let rabbitconsume = web::Data::new(RabbitConsumer::new(&pool));
     let consumer = rabbitconsume.clone();
@@ -79,11 +82,18 @@ async fn main() -> std::io::Result<()> {
 
     tracing::info!("Analytics Service listening on 0.0.0.0:{}", port);
 
+    let jwt_secret = env::var("SECRET").unwrap_or_else(|_| "something".to_string());
+    let middleware = TenantAuthMiddleware::with_redis(redis_client.get_ref().clone())
+        .with_secret(jwt_secret);
+
     let _ = HttpServer::new(move || {
         App::new()
             .app_data(pool.clone())
             .app_data(repo.clone())
             .app_data(rabbitconsume.clone())
+            .app_data(db_router.clone())
+            .app_data(redis_client.clone())
+            .wrap(middleware.clone())
             .route(
                 "/analytics",
                 web::post().to(handlers::AnalyticsRepo::analytics_handler),

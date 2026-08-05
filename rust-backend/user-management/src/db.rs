@@ -1,5 +1,5 @@
 // use actix_web::{web, HttpResponse, Responder, HttpRequest};
-use crate::auth::{create_jwt, hash_password, user_exists, verify_password};
+use crate::auth::{create_jwt_with_tenant, hash_password, user_exists, verify_password};
 use crate::models::{SignInRequest, SignUpRequest, UpdateUserRequest, UserRole, Users};
 use sqlx::PgPool;
 use std::env;
@@ -18,14 +18,14 @@ impl UserRepo {
         &self.pool
     }
 
-    pub async fn sign_up(&self, req: &SignUpRequest) -> Result<(Users, (String, String)), sqlx::Error> {
+    pub async fn sign_up(&self, req: &SignUpRequest, tenant_id: Uuid) -> Result<(Users, (String, String)), sqlx::Error> {
         let role = req.role.clone().unwrap_or(UserRole::User);
         let email = &req.email;
         let full_name = &req.full_name;
 
         let secret = env::var("SECRET").unwrap_or_else(|_| "obiisaboy".to_string());
 
-        if user_exists(&self.pool, email).await? {
+        if user_exists(&self.pool, email, tenant_id).await? {
             return Err(sqlx::Error::RowNotFound);
         }
 
@@ -33,11 +33,12 @@ impl UserRepo {
 
         let user = sqlx::query_as::<_, Users>(
             r#"
-                INSERT INTO users (email, password, full_name, role)
-                VALUES ($1, $2, $3, $4)
+                INSERT INTO users (tenant_id, email, password, full_name, role)
+                VALUES ($1, $2, $3, $4, $5)
                 RETURNING id, tenant_id, email, password, full_name, role, is_active, email_verified, created_at, updated_at
             "#,
         )
+        .bind(tenant_id)
         .bind(email)
         .bind(&password_hashed)
         .bind(full_name)
@@ -45,27 +46,41 @@ impl UserRepo {
         .fetch_one(&self.pool)
         .await?;
 
-        let tokens = create_jwt(user.id, &user.role, &secret)
+        let tokens = create_jwt_with_tenant(user.id, &user.role, user.tenant_id, platform::tenant::PricingTier::Free, &secret)
             .map_err(|_| sqlx::Error::Protocol("Failed to create JWT".into()))?;
 
         Ok((user, tokens))
     }
 
-    pub async fn sign_in(&self, req: &SignInRequest) -> Result<(Users, (String, String)), sqlx::Error> {
+    pub async fn sign_in(&self, req: &SignInRequest, tenant_id: Option<Uuid>) -> Result<(Users, (String, String)), sqlx::Error> {
         let email: &String = &req.email;
         let password: &String = &req.password;
         let secret = env::var("SECRET").unwrap_or_else(|_| "obiisaboy".to_string());
 
-        let user = sqlx::query_as::<_, Users>(
-            r#"
-                SELECT *
-                FROM users
-                WHERE email = $1
-            "#,
-        )
-        .bind(email)
-        .fetch_one(&self.pool)
-        .await?;
+        let user = if let Some(tid) = tenant_id {
+            sqlx::query_as::<_, Users>(
+                r#"
+                    SELECT *
+                    FROM users
+                    WHERE email = $1 AND tenant_id = $2
+                "#,
+            )
+            .bind(email)
+            .bind(tid)
+            .fetch_one(&self.pool)
+            .await?
+        } else {
+            sqlx::query_as::<_, Users>(
+                r#"
+                    SELECT *
+                    FROM users
+                    WHERE email = $1
+                "#,
+            )
+            .bind(email)
+            .fetch_one(&self.pool)
+            .await?
+        };
 
         if !user.is_active {
             return Err(sqlx::Error::Protocol("Account deactivated".into()));
@@ -75,7 +90,7 @@ impl UserRepo {
             return Err(sqlx::Error::Protocol("Invalid credentials".into()));
         }
 
-        let tokens = create_jwt(user.id, &user.role, &secret)
+        let tokens = create_jwt_with_tenant(user.id, &user.role, user.tenant_id, platform::tenant::PricingTier::Free, &secret)
             .map_err(|_| sqlx::Error::Protocol("Failed to create JWT".into()))?;
 
         Ok((user, tokens))

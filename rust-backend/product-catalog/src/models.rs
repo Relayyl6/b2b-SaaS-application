@@ -115,7 +115,7 @@ pub struct SignedUploadResponse {
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]
 #[serde(default)]
 pub struct ProductEvent {
-    pub tenant_id: Option<Uuid>,
+    pub tenant_id: Uuid,
     pub event_type: String,
     pub product_id: Uuid,
     pub supplier_id: Uuid,

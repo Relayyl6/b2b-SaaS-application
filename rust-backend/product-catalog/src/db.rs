@@ -5,18 +5,16 @@ use sqlx::PgPool;
 use uuid::Uuid;
 
 #[derive(Clone)]
-pub struct ProductRepo {
-    pool: PgPool,
-}
+pub struct ProductRepo {}
 
 impl ProductRepo {
-    /// Creates a new instance with the provided dependencies.
-    pub fn new(pool: PgPool) -> Self {
-        Self { pool }
+    /// Creates a new instance.
+    pub fn new() -> Self {
+        Self {}
     }
 
     /// Creates a product and emits best-effort integration events.
-    pub async fn create_product(&self, req: &CreateProductRequest) -> Result<Product, sqlx::Error> {
+    pub async fn create_product(&self, tx: &mut sqlx::Transaction<'_, sqlx::Postgres>, req: &CreateProductRequest) -> Result<Product, sqlx::Error> {
         let available = req.available.unwrap_or(true);
         let quantity = req.quantity.unwrap_or(0);
         let product_id = req.product_id.unwrap_or_else(Uuid::new_v4);
@@ -41,12 +39,12 @@ impl ProductRepo {
         .bind(low_stock_threshold)
         .bind(&req.sku)
         .bind(&req.variants)
-        .fetch_one(&self.pool)
+        .fetch_one(&mut **tx)
         .await
     }
 
     /// Returns products that belong to the given supplier.
-    pub async fn get_by_supplier(&self, supplier_id: Uuid) -> Result<Vec<Product>, sqlx::Error> {
+    pub async fn get_by_supplier(&self, tx: &mut sqlx::Transaction<'_, sqlx::Postgres>, supplier_id: Uuid) -> Result<Vec<Product>, sqlx::Error> {
         sqlx::query_as::<_, Product>(
             r#"
                 SELECT id, tenant_id, product_id, supplier_id, name, description, category, price, unit, quantity, available, low_stock_threshold, sku, variants, created_at, updated_at, deleted_at
@@ -56,13 +54,14 @@ impl ProductRepo {
             "#,
         )
         .bind(supplier_id)
-        .fetch_all(&self.pool)
+        .fetch_all(&mut **tx)
         .await
     }
 
     /// Returns a single product for a supplier/product pair.
     pub async fn get_one(
         &self,
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
         supplier_id: Uuid,
         product_id: Uuid,
     ) -> Result<Product, sqlx::Error> {
@@ -75,13 +74,14 @@ impl ProductRepo {
         )
         .bind(supplier_id)
         .bind(product_id)
-        .fetch_one(&self.pool)
+        .fetch_one(&mut **tx)
         .await
     }
 
     /// Updates a product and emits a product.updated event.
     pub async fn update_product(
         &self,
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
         supplier_id: Uuid,
         product_id: Uuid,
         req: &UpdateProductRequest,
@@ -124,13 +124,14 @@ impl ProductRepo {
         .bind(req.variants.as_ref())
         .bind(supplier_id)
         .bind(product_id)
-        .fetch_one(&self.pool)
+        .fetch_one(&mut **tx)
         .await
     }
 
     /// Deletes a product, emits product.deleted, and invalidates cache.
     pub async fn delete_product(
         &self,
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
         supplier_id: Uuid,
         product_id: Uuid,
     ) -> Result<u64, sqlx::Error> {
@@ -138,7 +139,7 @@ impl ProductRepo {
             sqlx::query(r#"UPDATE products SET deleted_at = NOW() WHERE supplier_id = $1 AND product_id = $2 AND deleted_at IS NULL"#)
                 .bind(supplier_id)
                 .bind(product_id)
-                .execute(&self.pool)
+                .execute(&mut **tx)
                 .await?;
 
         Ok(result.rows_affected())
@@ -147,6 +148,7 @@ impl ProductRepo {
     /// Searches products by optional query parameters.
     pub async fn search_products(
         &self,
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
         category: Option<String>,
         min_price: Option<f64>,
         max_price: Option<f64>,
@@ -176,7 +178,7 @@ impl ProductRepo {
         .bind(product_id)
         .bind(limit)
         .bind(offset)
-        .fetch_all(&self.pool)
+        .fetch_all(&mut **tx)
         .await?;
 
         Ok(rows)
@@ -185,9 +187,9 @@ impl ProductRepo {
     /// Creates products in bulk and emits product.created events.
     pub async fn bulk_create(
         &self,
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
         items: &[CreateProductRequest],
     ) -> Result<Vec<Product>, sqlx::Error> {
-        let mut tx = self.pool.begin().await?;
         let mut created = Vec::with_capacity(items.len());
 
         for it in items {
@@ -210,26 +212,25 @@ impl ProductRepo {
             .bind(it.low_stock_threshold.unwrap_or(10))
             .bind(&it.sku)
             .bind(&it.variants)
-            .fetch_one(&mut *tx)
+            .fetch_one(&mut **tx)
             .await?;
 
             created.push(p);
         }
 
-        tx.commit().await?;
         Ok(created)
     }
 
     /// Stores uploaded asset metadata for a product.
     pub async fn register_product_asset(
         &self,
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
         supplier_id: Uuid,
         product_id: Uuid,
         req: &RegisterProductAssetRequest,
     ) -> Result<ProductAsset, sqlx::Error> {
         let is_primary = req.is_primary.unwrap_or(false);
 
-        let mut tx = self.pool.begin().await?;
         let exists = sqlx::query_scalar::<_, i64>(
             r#"
             SELECT 1
@@ -239,7 +240,7 @@ impl ProductRepo {
         )
         .bind(supplier_id)
         .bind(product_id)
-        .fetch_optional(&mut *tx)
+        .fetch_optional(&mut **tx)
         .await?;
 
         if exists.is_none() {
@@ -255,7 +256,7 @@ impl ProductRepo {
             )
             .bind(supplier_id)
             .bind(product_id)
-            .execute(&mut *tx)
+            .execute(&mut **tx)
             .await?;
         }
 
@@ -285,16 +286,16 @@ impl ProductRepo {
         .bind(req.format.as_deref())
         .bind(req.alt_text.as_deref())
         .bind(is_primary)
-        .fetch_one(&mut *tx)
+        .fetch_one(&mut **tx)
         .await?;
 
-        tx.commit().await?;
         Ok(asset)
     }
 
     /// Lists stored asset metadata for a product.
     pub async fn list_product_assets(
         &self,
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
         supplier_id: Uuid,
         product_id: Uuid,
     ) -> Result<Vec<ProductAsset>, sqlx::Error> {
@@ -309,13 +310,14 @@ impl ProductRepo {
         )
         .bind(supplier_id)
         .bind(product_id)
-        .fetch_all(&self.pool)
+        .fetch_all(&mut **tx)
         .await
     }
 
     /// Deletes product asset metadata by asset id.
     pub async fn delete_product_asset(
         &self,
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
         supplier_id: Uuid,
         product_id: Uuid,
         asset_id: Uuid,
@@ -329,7 +331,7 @@ impl ProductRepo {
         .bind(supplier_id)
         .bind(product_id)
         .bind(asset_id)
-        .execute(&self.pool)
+        .execute(&mut **tx)
         .await?;
 
         Ok(result.rows_affected())

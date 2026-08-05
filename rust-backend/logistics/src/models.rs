@@ -68,7 +68,7 @@ pub struct ListShipmentQuery {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LogisticsEvent {
-    pub tenant_id: Option<Uuid>,
+    pub tenant_id: Uuid,
     pub event_type: String,
     pub shipment_id: Uuid,
     pub order_id: Uuid,

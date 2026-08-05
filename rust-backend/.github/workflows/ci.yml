@@ -66,6 +66,7 @@ jobs:
         env:
           DATABASE_URL: postgres://${{ secrets.POSTGRES_USER }}:${{ secrets.POSTGRES_PASSWORD }}@localhost:5432/analytics_service
           REDIS_URL: redis://localhost:6379
+          AMQP_ADDR: amqp://guest:guest@localhost:5672/%2f
         run: cargo clippy -p analytics --all-targets -- -D warnings
 
       - name: Clippy — inventory-management
@@ -78,18 +79,21 @@ jobs:
         env:
           DATABASE_URL: postgres://${{ secrets.POSTGRES_USER }}:${{ secrets.POSTGRES_PASSWORD }}@localhost:5432/logistics
           REDIS_URL: redis://localhost:6379
+          AMQP_ADDR: amqp://guest:guest@localhost:5672/%2f
         run: cargo clippy -p logistics --all-targets -- -D warnings
 
       - name: Clippy — notifications
         env:
           DATABASE_URL: postgres://${{ secrets.POSTGRES_USER }}:${{ secrets.POSTGRES_PASSWORD }}@localhost:5432/notifications
           REDIS_URL: redis://localhost:6379
+          AMQP_ADDR: amqp://guest:guest@localhost:5672/%2f
         run: cargo clippy -p notifications --all-targets -- -D warnings
 
       - name: Clippy — order-service
         env:
           DATABASE_URL: postgres://${{ secrets.POSTGRES_USER }}:${{ secrets.POSTGRES_PASSWORD }}@localhost:5432/orders
           REDIS_URL: redis://localhost:6379
+          AMQP_ADDR: amqp://guest:guest@localhost:5672/%2f
         run: cargo clippy -p order-service --all-targets -- -D warnings
 
       - name: Clippy — payments
@@ -123,4 +127,5 @@ jobs:
         env:
           DATABASE_URL: postgres://${{ secrets.POSTGRES_USER }}:${{ secrets.POSTGRES_PASSWORD }}@localhost:5432/inventory
           REDIS_URL: redis://localhost:6379
+          AMQP_ADDR: amqp://guest:guest@localhost:5672/%2f
         run: cargo test --workspace

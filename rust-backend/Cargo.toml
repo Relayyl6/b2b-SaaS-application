@@ -11,7 +11,7 @@ members = [
     "product-catalog",
     "supplier-management",
     "user-management",
-    "e2e-tests", "gateway-tests",
+    "e2e-tests", "gateway-tests", "tenant-management",
 ]
 
 [workspace.package]

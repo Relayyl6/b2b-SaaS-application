@@ -47,13 +47,19 @@ impl StreamPublisher {
             return Ok("noop".to_string());
         }
 
-        let stream = stream_for_event(event_type);
+        let global_stream = stream_for_event(event_type);
         let payload_val = serde_json::to_value(message)?;
         let tenant_str = payload_val
             .get("tenant_id")
             .and_then(|v| v.as_str())
             .unwrap_or("")
             .to_string();
+
+        if tenant_str.is_empty() {
+            return Err("tenant_id is strictly required in event payload for isolated streams".into());
+        }
+
+        let tenant_stream = format!("tenant:{}:{}", tenant_str, global_stream);
         let payload = serde_json::to_string(&payload_val)?;
 
         let Some(pool) = &self.pool else {
@@ -61,18 +67,28 @@ impl StreamPublisher {
         };
 
         let mut conn = pool.get().await?;
-        let res: String = redis::cmd("XADD")
-            .arg(stream)
+        
+        let mut pipe = redis::pipe();
+        // 1. Publish to the new Tenant-Isolated stream (Phase 3)
+        pipe.cmd("XADD")
+            .arg(&tenant_stream)
+            .arg("MAXLEN").arg("~").arg(100_000)
             .arg("*")
-            .arg("event_type")
-            .arg(event_type)
-            .arg("tenant_id")
-            .arg(&tenant_str)
-            .arg("payload")
-            .arg(payload)
-            .query_async(&mut *conn)
-            .await?;
-        Ok(res)
+            .arg("event_type").arg(event_type)
+            .arg("tenant_id").arg(&tenant_str)
+            .arg("payload").arg(&payload);
+            
+        // 2. Publish to the legacy Global stream (Backwards compatibility - "dont break anything")
+        pipe.cmd("XADD")
+            .arg(global_stream)
+            .arg("MAXLEN").arg("~").arg(100_000)
+            .arg("*")
+            .arg("event_type").arg(event_type)
+            .arg("tenant_id").arg(&tenant_str)
+            .arg("payload").arg(&payload);
+
+        let (tenant_id, _global_id): (String, String) = pipe.query_async(&mut *conn).await?;
+        Ok(tenant_id)
     }
 
     pub fn publish_async<T>(&self, event_type: &str, message: T)
@@ -87,7 +103,7 @@ impl StreamPublisher {
                 Err(e) => e.to_string(),
             };
             
-            tracing::warn!(%event_type, error = %error_str, "redis stream publish failed, routing to DLQ");
+            tracing::warn!(%event_type, error = %error_str, "redis stream publish failed, routing to dual DLQ");
             if let Some(pool) = &this.pool {
                 if let Ok(mut conn) = pool.get().await {
                     let payload_val = serde_json::to_value(&message).unwrap_or_default();
@@ -97,19 +113,35 @@ impl StreamPublisher {
                         .unwrap_or("")
                         .to_string();
                     let payload = serde_json::to_string(&message).unwrap_or_default();
-                    let _: Result<(), _> = redis::cmd("XADD")
-                        .arg("stream:dlq")
+                    
+                    let tenant_dlq = if tenant_str.is_empty() {
+                        "stream:dlq:unassigned".to_string()
+                    } else {
+                        format!("tenant:{}:dlq", tenant_str)
+                    };
+
+                    let mut pipe = redis::pipe();
+                    // Isolated DLQ
+                    pipe.cmd("XADD")
+                        .arg(&tenant_dlq)
+                        .arg("MAXLEN").arg("~").arg(10_000)
                         .arg("*")
-                        .arg("event_type")
-                        .arg(&event_type)
-                        .arg("tenant_id")
-                        .arg(&tenant_str)
-                        .arg("payload")
-                        .arg(payload)
-                        .arg("error")
-                        .arg(&error_str)
-                        .query_async(&mut *conn)
-                        .await;
+                        .arg("event_type").arg(&event_type)
+                        .arg("tenant_id").arg(&tenant_str)
+                        .arg("payload").arg(&payload)
+                        .arg("error").arg(&error_str);
+                        
+                    // Global DLQ (Legacy)
+                    pipe.cmd("XADD")
+                        .arg("stream:dlq")
+                        .arg("MAXLEN").arg("~").arg(10_000)
+                        .arg("*")
+                        .arg("event_type").arg(&event_type)
+                        .arg("tenant_id").arg(&tenant_str)
+                        .arg("payload").arg(&payload)
+                        .arg("error").arg(&error_str);
+                        
+                    let _: Result<(String, String), _> = pipe.query_async(&mut *conn).await;
                 }
             }
         });

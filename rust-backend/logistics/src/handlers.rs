@@ -11,15 +11,32 @@ use crate::rabbit_pub::RabbitPublisher;
 
 /// Creates a shipment and publishes logistics.shipment_created.
 pub async fn create_shipment(
+    tenant: web::ReqData<platform::tenant::TenantContext>,
+    db_router: web::Data<platform::db_router::DynamicPoolRouter>,
     repo: web::Data<LogisticsRepo>,
     redis_pub: web::Data<RedisPublisher>,
     rabbit_pub: web::Data<RabbitPublisher>,
     req: web::Json<CreateShipmentRequest>,
 ) -> impl Responder {
-    match repo.create_shipment(&req).await {
+    let pool = match db_router.get_pool(&tenant).await {
+        Ok(p) => p,
+        Err(e) => return HttpResponse::InternalServerError().body(format!("db pool error: {e}")),
+    };
+    let mut tx = match pool.begin().await {
+        Ok(t) => t,
+        Err(e) => return HttpResponse::InternalServerError().body(format!("tx begin error: {e}")),
+    };
+    if let Err(e) = tenant.apply_rls(&mut *tx).await {
+        return HttpResponse::InternalServerError().body(format!("rls error: {e}"));
+    }
+
+    match repo.create_shipment(&mut *tx, tenant.tenant_id, &req).await {
         Ok(shipment) => {
+            if let Err(e) = tx.commit().await {
+                return HttpResponse::InternalServerError().body(format!("tx commit error: {e}"));
+            }
             let event = LogisticsEvent {
-                tenant_id: Some(shipment.supplier_id),
+                tenant_id: tenant.tenant_id,
                 event_type: "logistics.shipment_created".into(),
                 shipment_id: shipment.id,
                 order_id: shipment.order_id,
@@ -43,58 +60,95 @@ pub async fn create_shipment(
 }
 
 /// Returns shipment details by id.
-pub async fn get_shipment(repo: web::Data<LogisticsRepo>, path: web::Path<Uuid>) -> impl Responder {
-    match repo.get_shipment(path.into_inner()).await {
-        Ok(shipment) => HttpResponse::Ok().json(shipment),
+pub async fn get_shipment(
+    tenant: web::ReqData<platform::tenant::TenantContext>,
+    db_router: web::Data<platform::db_router::DynamicPoolRouter>,
+    repo: web::Data<LogisticsRepo>,
+    path: web::Path<Uuid>,
+) -> impl Responder {
+    let pool = match db_router.get_pool(&tenant).await {
+        Ok(p) => p,
+        Err(e) => return HttpResponse::InternalServerError().body(format!("db pool error: {e}")),
+    };
+    let mut tx = match pool.begin().await {
+        Ok(t) => t,
+        Err(e) => return HttpResponse::InternalServerError().body(format!("tx begin error: {e}")),
+    };
+    if let Err(e) = tenant.apply_rls(&mut *tx).await {
+        return HttpResponse::InternalServerError().body(format!("rls error: {e}"));
+    }
+
+    match repo.get_shipment(&mut *tx, path.into_inner()).await {
+        Ok(shipment) => {
+            let _ = tx.commit().await;
+            HttpResponse::Ok().json(shipment)
+        }
         Err(sqlx::Error::RowNotFound) => HttpResponse::NotFound().body("shipment not found"),
         Err(e) => HttpResponse::InternalServerError().body(format!("db error: {e}")),
     }
 }
 
 /// Returns supplier shipments using filter and pagination query fields.
-/// List shipments for a supplier using filter and pagination query parameters.
-///
-/// Returns an HTTP response: `200 OK` with the matching shipments as JSON on success, or
-/// `500 Internal Server Error` with a `db error` message on repository failure.
-///
-/// # Examples
-///
-/// ```
-/// use actix_web::web;
-/// use uuid::Uuid;
-///
-/// // Construct a supplier id and query parameters (fill fields as appropriate).
-/// let supplier_id = Uuid::new_v4();
-/// let query = web::Query::from(ListShipmentQuery { /* set filter/pagination fields */ });
-/// // In an async test, call the handler with web::Path and web::Query wrappers:
-/// // let resp = list_supplier_shipments(repo_data, web::Path::from(supplier_id), query).await;
-/// ```
 pub async fn list_supplier_shipments(
+    tenant: web::ReqData<platform::tenant::TenantContext>,
+    db_router: web::Data<platform::db_router::DynamicPoolRouter>,
     repo: web::Data<LogisticsRepo>,
     path: web::Path<Uuid>,
     query: web::Query<ListShipmentQuery>,
 ) -> impl Responder {
+    let pool = match db_router.get_pool(&tenant).await {
+        Ok(p) => p,
+        Err(e) => return HttpResponse::InternalServerError().body(format!("db pool error: {e}")),
+    };
+    let mut tx = match pool.begin().await {
+        Ok(t) => t,
+        Err(e) => return HttpResponse::InternalServerError().body(format!("tx begin error: {e}")),
+    };
+    if let Err(e) = tenant.apply_rls(&mut *tx).await {
+        return HttpResponse::InternalServerError().body(format!("rls error: {e}"));
+    }
+
     match repo
-        .list_supplier_shipments(path.into_inner(), &query.into_inner())
+        .list_supplier_shipments(&mut *tx, path.into_inner(), &query.into_inner())
         .await
     {
-        Ok(shipments) => HttpResponse::Ok().json(shipments),
+        Ok(shipments) => {
+            let _ = tx.commit().await;
+            HttpResponse::Ok().json(shipments)
+        }
         Err(e) => HttpResponse::InternalServerError().body(format!("db error: {e}")),
     }
 }
 
 /// Updates shipment status and publishes logistics.shipment_updated.
 pub async fn update_status(
+    tenant: web::ReqData<platform::tenant::TenantContext>,
+    db_router: web::Data<platform::db_router::DynamicPoolRouter>,
     repo: web::Data<LogisticsRepo>,
     redis_pub: web::Data<RedisPublisher>,
     rabbit_pub: web::Data<RabbitPublisher>,
     path: web::Path<Uuid>,
     req: web::Json<UpdateShipmentStatusRequest>,
 ) -> impl Responder {
-    match repo.update_status(path.into_inner(), &req).await {
+    let pool = match db_router.get_pool(&tenant).await {
+        Ok(p) => p,
+        Err(e) => return HttpResponse::InternalServerError().body(format!("db pool error: {e}")),
+    };
+    let mut tx = match pool.begin().await {
+        Ok(t) => t,
+        Err(e) => return HttpResponse::InternalServerError().body(format!("tx begin error: {e}")),
+    };
+    if let Err(e) = tenant.apply_rls(&mut *tx).await {
+        return HttpResponse::InternalServerError().body(format!("rls error: {e}"));
+    }
+
+    match repo.update_status(&mut *tx, path.into_inner(), &req).await {
         Ok(shipment) => {
+            if let Err(e) = tx.commit().await {
+                return HttpResponse::InternalServerError().body(format!("tx commit error: {e}"));
+            }
             let event = LogisticsEvent {
-                tenant_id: Some(shipment.supplier_id),
+                tenant_id: tenant.tenant_id,
                 event_type: "logistics.shipment_updated".into(),
                 shipment_id: shipment.id,
                 order_id: shipment.order_id,
@@ -125,15 +179,32 @@ pub async fn update_status(
 
 /// Cancels an active shipment by order id and publishes logistics.shipment_cancelled.
 pub async fn cancel_shipment_by_order(
+    tenant: web::ReqData<platform::tenant::TenantContext>,
+    db_router: web::Data<platform::db_router::DynamicPoolRouter>,
     repo: web::Data<LogisticsRepo>,
     redis_pub: web::Data<RedisPublisher>,
     rabbit_pub: web::Data<RabbitPublisher>,
     path: web::Path<Uuid>,
 ) -> impl Responder {
-    match repo.cancel_by_order_id(path.into_inner()).await {
+    let pool = match db_router.get_pool(&tenant).await {
+        Ok(p) => p,
+        Err(e) => return HttpResponse::InternalServerError().body(format!("db pool error: {e}")),
+    };
+    let mut tx = match pool.begin().await {
+        Ok(t) => t,
+        Err(e) => return HttpResponse::InternalServerError().body(format!("tx begin error: {e}")),
+    };
+    if let Err(e) = tenant.apply_rls(&mut *tx).await {
+        return HttpResponse::InternalServerError().body(format!("rls error: {e}"));
+    }
+
+    match repo.cancel_by_order_id(&mut *tx, path.into_inner()).await {
         Ok(shipment) => {
+            if let Err(e) = tx.commit().await {
+                return HttpResponse::InternalServerError().body(format!("tx commit error: {e}"));
+            }
             let event = LogisticsEvent {
-                tenant_id: Some(shipment.supplier_id),
+                tenant_id: tenant.tenant_id,
                 event_type: "logistics.shipment_cancelled".into(),
                 shipment_id: shipment.id,
                 order_id: shipment.order_id,
@@ -167,14 +238,10 @@ pub async fn health() -> impl Responder {
 mod tests {
     use super::*;
     use actix_web::{test, App};
-    // Note: To fully test handlers with mock dependencies, we would extract LogisticRepo to a Trait.
-    // For compilation testing, we write a test structure.
 
     #[actix_web::test]
     async fn test_health_handler() {
         let req = test::TestRequest::get().uri("/health").to_request();
         let resp = health().await;
-        // In a real test we'd check response body, but `impl Responder` is returned.
-        // It compiles successfully.
     }
 }

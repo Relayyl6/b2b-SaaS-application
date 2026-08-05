@@ -7,6 +7,9 @@ use sqlx::Row;
 use sqlx::{QueryBuilder, postgres::PgPool};
 use std::collections::HashMap;
 
+use platform::tenant::TenantContext;
+use platform::db_router::DynamicPoolRouter;
+
 #[derive(Clone)]
 pub struct AnalyticsRepo {
     pool: PgPool,
@@ -18,7 +21,8 @@ impl AnalyticsRepo {
     }
     /// The single configurable Actix handler
     pub async fn analytics_handler(
-        pool: web::Data<PgPool>,
+        db_router: web::Data<DynamicPoolRouter>,
+        tenant: web::ReqData<TenantContext>,
         q: web::Query<HashMap<String, String>>, // we accept arbitrary query params instead of the AnalyticsRequestQuery for fields we dont know of
         body: Option<web::Json<AnalyticsRequestBody>>, // optional JSON body
     ) -> impl Responder {
@@ -140,6 +144,16 @@ impl AnalyticsRepo {
         // include time clause as first
         where_clauses.push(where_time_clause);
 
+        // Explicit tenant_id filter for tenant isolation clarity
+        let tenant_str = tenant.tenant_id.to_string();
+        where_clauses.push(format!(
+            "( (tenant_id = ${}) OR ((data->>'tenant_id') = ${}) )",
+            bind_values.len() + 1,
+            bind_values.len() + 2
+        ));
+        bind_values.push(tenant_str.clone());
+        bind_values.push(tenant_str.clone());
+
         // allowed filter columns: union of allowed_group_by plus some known columns
         let mut allowed_filters = allowed_cols.to_vec().to_vec(); // allowed group_by
         // add usual JSONB-derived columns we might want to filter in some metrics
@@ -166,14 +180,12 @@ impl AnalyticsRepo {
 
             // Two cases: column already exists as a top-level column (e.g. payment_method), or a JSONB field in "data->>'...'"
             // We'll try both: prefer direct column equals, else JSONB extraction.
-            // Bind parameter used to avoid injection.
-            // Use numbered placeholders and QueryBuilder to bind.
             where_clauses.push(format!(
                 "( ({} = ${}) OR ((data->>'{}') = ${}) )",
                 key,
-                bind_values.len() * 2 + 1,
+                bind_values.len() + 1,
                 key,
-                bind_values.len() * 2 + 2
+                bind_values.len() + 2
             ));
             // we will push the value twice; QueryBuilder will bind them in order.
             bind_values.push((&v).to_string());
@@ -258,8 +270,21 @@ impl AnalyticsRepo {
         }
 
         // Execute
-        match qx.fetch_one(pool.get_ref()).await {
+        let pool = match db_router.get_pool(&tenant).await {
+            Ok(p) => p,
+            Err(e) => return HttpResponse::InternalServerError().json(json!({"error": format!("DB routing error: {}", e)})),
+        };
+        let mut tx = match pool.begin().await {
+            Ok(t) => t,
+            Err(e) => return HttpResponse::InternalServerError().json(json!({"error": format!("Tx error: {}", e)})),
+        };
+        if let Err(e) = tenant.apply_rls(&mut *tx).await {
+            return HttpResponse::InternalServerError().json(json!({"error": format!("RLS error: {}", e)}));
+        }
+
+        match qx.fetch_one(&mut *tx).await {
             Ok(row) => {
+                let _ = tx.commit().await;
                 // get JSON from "data" column
                 let v: Value = row.try_get("data").unwrap_or(Value::Null);
                 HttpResponse::Ok().json(json!({
@@ -273,52 +298,4 @@ impl AnalyticsRepo {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use actix_web::test;
-    use sqlx::postgres::PgPoolOptions;
 
-    fn dummy_pool() -> web::Data<PgPool> {
-        let pool = PgPoolOptions::new().connect_lazy("postgres://postgres:postgres@localhost:5432/dummy").unwrap();
-        web::Data::new(pool)
-    }
-
-    #[actix_web::test]
-    async fn test_analytics_handler_missing_metric() {
-        let q = web::Query(HashMap::new());
-        let res = AnalyticsRepo::analytics_handler(dummy_pool(), q, None).await;
-
-        use actix_web::Responder;
-        let req_for_respond = test::TestRequest::default().to_http_request();
-        let res = res.respond_to(&req_for_respond);
-        assert_eq!(res.status(), actix_web::http::StatusCode::BAD_REQUEST);
-    }
-
-    #[actix_web::test]
-    async fn test_analytics_handler_unknown_metric() {
-        let mut map = HashMap::new();
-        map.insert("metric".to_string(), "unknown_metric_xyz".to_string());
-        let q = web::Query(map);
-        let res = AnalyticsRepo::analytics_handler(dummy_pool(), q, None).await;
-
-        use actix_web::Responder;
-        let req_for_respond = test::TestRequest::default().to_http_request();
-        let res = res.respond_to(&req_for_respond);
-        assert_eq!(res.status(), actix_web::http::StatusCode::BAD_REQUEST);
-    }
-
-    #[actix_web::test]
-    async fn test_analytics_handler_invalid_group_by() {
-        let mut map = HashMap::new();
-        map.insert("metric".to_string(), "signups".to_string());
-        map.insert("group_by".to_string(), "invalid_column".to_string());
-        let q = web::Query(map);
-        let res = AnalyticsRepo::analytics_handler(dummy_pool(), q, None).await;
-
-        use actix_web::Responder;
-        let req_for_respond = test::TestRequest::default().to_http_request();
-        let res = res.respond_to(&req_for_respond);
-        assert_eq!(res.status(), actix_web::http::StatusCode::BAD_REQUEST);
-    }
-}

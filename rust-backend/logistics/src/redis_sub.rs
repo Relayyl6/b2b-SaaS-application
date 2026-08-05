@@ -1,17 +1,25 @@
 use actix_web::web::Data;
 use chrono::Utc;
+use platform::db_router::DynamicPoolRouter;
+use platform::tenant::{AuthMethod, PricingTier, TenantContext};
 use platform::{metrics, streams};
 use std::env;
+use uuid::Uuid;
 
 use crate::db::LogisticsRepo;
 use crate::models::{CreateShipmentRequest, IncomingOrderEvent, LogisticsEvent, ShipmentStatus};
 use crate::publisher::RedisPublisher;
 use crate::rabbit_pub::RabbitPublisher;
 
-const EVENTS: &[&str] = &["inventory.finalized", "order.cancelled", "logistics.shipment_preparation_command"];
+const EVENTS: &[&str] = &[
+    "inventory.finalized",
+    "order.cancelled",
+    "logistics.shipment_preparation_command",
+];
 
 /// Consumes Redis Stream events and applies logistics side effects.
 pub async fn listen_to_redis_events(
+    db_router: Data<DynamicPoolRouter>,
     repo: Data<LogisticsRepo>,
     redis_pub: Data<RedisPublisher>,
     rabbit_pub: Data<RabbitPublisher>,
@@ -25,6 +33,7 @@ pub async fn listen_to_redis_events(
         &consumer,
         EVENTS,
         move |envelope| {
+            let db_router = db_router.clone();
             let repo = repo.clone();
             let redis_pub = redis_pub.clone();
             let rabbit_pub = rabbit_pub.clone();
@@ -47,11 +56,15 @@ pub async fn listen_to_redis_events(
                     }
                 }
 
+                let tenant_id = tenant_id.unwrap();
+
                 let result = handle_event(
+                    &db_router,
                     &repo,
                     &redis_pub,
                     &rabbit_pub,
                     &event_type,
+                    tenant_id,
                     event,
                 )
                 .await;
@@ -73,12 +86,26 @@ pub async fn listen_to_redis_events(
 }
 
 async fn handle_event(
+    db_router: &Data<DynamicPoolRouter>,
     repo: &Data<LogisticsRepo>,
     redis_pub: &Data<RedisPublisher>,
     rabbit_pub: &Data<RabbitPublisher>,
     event_type: &str,
+    tenant_id: Uuid,
     event: IncomingOrderEvent,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let tenant_ctx = TenantContext::new(
+        tenant_id,
+        event.user_id,
+        PricingTier::Free,
+        vec![],
+        AuthMethod::ApiKey,
+    );
+
+    let pool = db_router.get_pool(&tenant_ctx).await?;
+    let mut tx = pool.begin().await?;
+    tenant_ctx.apply_rls(&mut *tx).await?;
+
     match event_type {
         "inventory.finalized" | "logistics.shipment_preparation_command" => {
             let Some(order_id) = event.order_id else {
@@ -88,7 +115,7 @@ async fn handle_event(
                 return Ok(());
             };
 
-            match repo.get_by_order_id(order_id).await {
+            match repo.get_by_order_id(&mut *tx, order_id).await {
                 Ok(_) => return Ok(()),
                 Err(sqlx::Error::RowNotFound) => {}
                 Err(e) => return Err(Box::new(e)),
@@ -101,9 +128,11 @@ async fn handle_event(
                 product_id: event.product_id,
                 notes: Some("Created after payment finalization".to_string()),
             };
-            let shipment = repo.create_shipment(&req).await?;
+            let shipment = repo.create_shipment(&mut *tx, tenant_id, &req).await?;
+            tx.commit().await?;
+
             let outbound = LogisticsEvent {
-                tenant_id: event.tenant_id.or(Some(shipment.supplier_id)),
+                tenant_id,
                 event_type: "logistics.shipment_created".to_string(),
                 shipment_id: shipment.id,
                 order_id: shipment.order_id,
@@ -123,13 +152,15 @@ async fn handle_event(
             let Some(order_id) = event.order_id else {
                 return Ok(());
             };
-            let shipment = match repo.cancel_by_order_id(order_id).await {
+            let shipment = match repo.cancel_by_order_id(&mut *tx, order_id).await {
                 Ok(shipment) => shipment,
                 Err(sqlx::Error::RowNotFound) => return Ok(()),
                 Err(e) => return Err(Box::new(e)),
             };
+            tx.commit().await?;
+
             let outbound = LogisticsEvent {
-                tenant_id: event.tenant_id.or(Some(shipment.supplier_id)),
+                tenant_id,
                 event_type: "logistics.shipment_cancelled".to_string(),
                 shipment_id: shipment.id,
                 order_id: shipment.order_id,

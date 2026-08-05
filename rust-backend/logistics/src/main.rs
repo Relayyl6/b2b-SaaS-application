@@ -7,8 +7,10 @@ mod redis_sub;
 
 use actix_web::{web, App, HttpServer};
 use dotenvy::dotenv;
+use platform::db_router::DynamicPoolRouter;
+use platform::middleware::tenant_middleware::TenantAuthMiddleware;
 use platform::{metrics, observability};
-use redis::Client;
+use redis::Client as RedisClient;
 use sqlx::postgres::PgPoolOptions;
 use std::env;
 use tokio::spawn;
@@ -38,15 +40,15 @@ async fn main() -> std::io::Result<()> {
         std::process::exit(1);
     }
 
-    let repo = web::Data::new(db::LogisticsRepo::new(&pool));
+    let db_router = web::Data::new(DynamicPoolRouter::new(pool.clone()));
+    let repo = web::Data::new(db::LogisticsRepo::new());
 
-    let redis_client = web::Data::new(
-        redis_url
-            .as_ref()
-            .map(|url| Client::open(url.as_str()))
-            .unwrap_or_else(|_| Ok(Client::open("redis://localhost:6379").expect("redis fallback")))
-            .expect("redis client"),
-    );
+    let raw_redis_client = redis_url
+        .as_ref()
+        .map(|url| RedisClient::open(url.as_str()))
+        .unwrap_or_else(|_| Ok(RedisClient::open("redis://localhost:6379").expect("redis fallback")))
+        .expect("redis client");
+    let redis_client = web::Data::new(raw_redis_client.clone());
 
     let amqp_addr = env::var("AMQP_ADDR")
         .unwrap_or_else(|_| "amqp://guest:guest@127.0.0.1:5672/%2f".into());
@@ -71,13 +73,14 @@ async fn main() -> std::io::Result<()> {
         Err(_) => web::Data::new(RedisPublisher::new_noop()),
     };
 
+    let db_router_clone = db_router.clone();
     let repo_clone = repo.clone();
     let redis_pub_clone = redis_pub.clone();
     let rabbit_pub_clone = rabbit_pub.clone();
     if redis_url.is_ok() {
         spawn(async move {
             if let Err(e) =
-                listen_to_redis_events(repo_clone, redis_pub_clone, rabbit_pub_clone).await
+                listen_to_redis_events(db_router_clone, repo_clone, redis_pub_clone, rabbit_pub_clone).await
             {
                 eprintln!("redis listener stopped: {e}");
             }
@@ -86,6 +89,8 @@ async fn main() -> std::io::Result<()> {
 
     HttpServer::new(move || {
         App::new()
+            .wrap(TenantAuthMiddleware::with_redis(raw_redis_client.clone()))
+            .app_data(db_router.clone())
             .app_data(repo.clone())
             .app_data(redis_pub.clone())
             .app_data(rabbit_pub.clone())

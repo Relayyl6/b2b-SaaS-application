@@ -20,8 +20,11 @@
 10. [Usage Metering & Billing Engine](#10-usage-metering--billing-engine)
 11. [Complete Database Schema (Multi-Tenant)](#11-complete-database-schema)
 12. [Dashboard Configuration APIs (Like Supabase Dashboard)](#12-dashboard-configuration-apis)
-13. [Secrets Management — .env Reference](#13-secrets-management)
-14. [Phased Execution Roadmap](#14-phased-execution-roadmap)
+23. [Tenant Onboarding Flow](#23-tenant-onboarding-flow)
+24. [Developer Experience (DX) & Client SDKs](#24-developer-experience-dx--client-sdks)
+25. [Integrations Model: Native Defaults & BYOP](#25-integrations-model-native-defaults--byop)
+26. [Headless Checkout Orchestration](#26-headless-checkout-orchestration)
+27. [Platform Dashboard UI Mapping](#27-platform-dashboard-ui-mapping)
 
 ---
 
@@ -2217,3 +2220,642 @@ impl CommercePlatformApp {
     }
 }
 ```
+
+---
+
+## 17. Headless Commerce Architecture — "Backend in a Box"
+
+This is the core thesis: every tenant gets a **complete, production-grade commerce backend** with zero infrastructure setup. They point their storefront at our API — Shopify storefront, a custom Next.js app, a React Native app, whatever — and everything just works.
+
+### 17.1 What "Headless" Means for Our Platform
+
+```
+┌──────────────────────────────────────────────────────────────────┐
+│                        TENANT'S FRONTEND                         │
+│   Shopify Storefront  │  Next.js App  │  React Native  │  CLI    │
+└──────────────┬─────────────────────────────────────────┬─────────┘
+               │ pk_live_... (public key)                │ sk_live_... (server key)
+               ▼                                         ▼
+┌──────────────────────────────────────────────────────────────────┐
+│                  Commerce Platform API Gateway                   │
+│  TenantAuthMiddleware → TenantContext → DynamicPoolRouter        │
+├────────────┬───────────┬──────────┬──────────┬───────────────────┤
+│  Products  │ Inventory │  Orders  │ Payments │  Notifications    │
+│  Catalog   │ Management│  Service │  Service │  + Webhooks       │
+├────────────┴───────────┴──────────┴──────────┴───────────────────┤
+│                     Platform Event Mesh                          │
+│              Redis Streams (StreamPublisher, consume_json)       │
+├──────────────────────────────────────────────────────────────────┤
+│                  Multi-Tenant Postgres (RLS)                     │
+│         DynamicPoolRouter: Shared (Free/Growth) │ Dedicated (Ent)│
+└──────────────────────────────────────────────────────────────────┘
+```
+
+### 17.2 The Five Commerce Primitives (What Every Tenant Gets)
+
+| Primitive | Service | Key Streams | Description |
+|-----------|---------|-------------|-------------|
+| **Catalog** | `product-catalog` | `product.created`, `product.updated`, `product.deleted` | Full product management: variants, pricing, assets via Cloudinary, categories, metadata JSONB |
+| **Inventory** | `inventory-management` | `inventory.updated`, `inventory.reserved`, `inventory.released`, `inventory.lowstock` | Real-time stock tracking with reservation TTL, multi-warehouse support via supplier_id scoping |
+| **Orders** | `order-service` | `order.created`, `order.confirmed`, `order.cancelled`, `order.shipped`, `order.delivered` | Full order lifecycle with expiration worker, optimistic locking via `version` field |
+| **Payments** | `payments` | `payment.succeeded`, `payment.failed`, `payment.refunded` | Stripe Connect for multi-vendor splits, per-tenant payment provider config (Paystack/Flutterwave stored encrypted) |
+| **Fulfillment** | `logistics` | `logistics.shipment_created`, `logistics.shipment_updated`, `logistics.shipment_cancelled` | Shipment lifecycle tracking, cancellation propagation back to order saga |
+
+### 17.3 The Commerce Saga — Full Order Lifecycle
+
+This is the event-driven saga that glues all five primitives together. Every step is tenant-isolated.
+
+```
+                         COMMERCE ORDER SAGA
+                         ─────────────────────
+
+1. POST /orders            (order-service)
+   ├─► publishes: order.created
+   │     tenant_id: ✓, reservation_ttl: from tenant config
+   │
+2. inventory-management consumer hears order.created
+   ├─► Reserves stock (inventory.reserved OR inventory.rejected)
+   │
+3. order-service consumer hears inventory.reserved
+   ├─► Marks order as CONFIRMED
+   ├─► publishes: order.confirmed
+   ├─► publishes: logistics.shipment_preparation_command
+   │
+4. payments consumer hears order.confirmed
+   ├─► Triggers Stripe PaymentIntent
+   ├─► publishes: payment.succeeded OR payment.failed
+   │
+5. [on payment.failed]
+   ├─► publishes: inventory.release_command (undo reservation)
+   ├─► publishes: order.cancelled
+   │
+6. logistics consumer hears logistics.shipment_preparation_command
+   ├─► Creates shipment
+   ├─► publishes: logistics.shipment_created
+   │
+7. order-service consumer hears logistics.shipment_created
+   ├─► Updates order status to SHIPPED
+   ├─► publishes: order.shipped
+   │
+8. notifications consumer hears order.shipped
+   ├─► Sends email/SMS/push to end user
+   ├─► Dispatches tenant webhook: POST tenant_webhook_url
+   │     HMAC signed with tenant's whsec_...
+   │
+9. analytics consumer hears all events
+   └─► Writes to TimescaleDB hypertables for tenant dashboards
+```
+
+### 17.4 Per-Microservice Phase 3 Contract
+
+Every microservice in the platform MUST satisfy all four of these contracts:
+
+#### Contract 1 — TenantAuthMiddleware is active
+```rust
+// In main.rs — REQUIRED in every service
+HttpServer::new(move || {
+    let tenant_mw = TenantAuthMiddleware::new()
+        .with_redis(redis_client.get_ref().clone());
+    App::new()
+        .wrap(tenant_mw)              // MANDATORY
+        .app_data(db_router.clone())  // DynamicPoolRouter, not PgPool
+})
+```
+
+#### Contract 2 — Every handler extracts TenantContext
+```rust
+pub async fn my_handler(
+    tenant: web::ReqData<platform::tenant::TenantContext>,
+    db_router: web::Data<platform::db_router::DynamicPoolRouter>,
+    redis_pub: web::Data<RedisPublisher>,
+) -> impl Responder {
+    let pool = db_router.get_pool(&tenant).await.unwrap();
+    let mut tx = pool.begin().await.unwrap();
+    tenant.apply_rls(&mut *tx).await.unwrap();
+    // DB queries here are scoped to tenant automatically
+    tx.commit().await.unwrap();
+
+    redis_pub.publish_async("my.event", MyEvent {
+        tenant_id: tenant.tenant_id,  // MANDATORY in every event
+    });
+}
+```
+
+#### Contract 3 — RLS applied before every DB query
+Every handler that reads/writes the database MUST start a transaction and call `tenant.apply_rls()` before any query.
+
+#### Contract 4 — tenant_id in every event payload
+Every event struct published to a Redis stream MUST have `tenant_id: Uuid` (non-optional). Stream consumers MUST validate `envelope.tenant_id == Some(payload.tenant_id)`.
+
+---
+
+## 18. Service-by-Service Phase 3 Audit and Refactor Guide
+
+### 18.1 `inventory-management` — Status: ~85% Complete
+
+**Already done:**
+- TenantAuthMiddleware wrapped in main.rs
+- DynamicPoolRouter registered as app data
+- All handlers extract TenantContext and DynamicPoolRouter
+- tenant.apply_rls() called in every handler transaction
+
+**Remaining gaps:**
+- StockUpdateEvent.tenant_id should be Uuid (not Option<Uuid>)
+- update_stock uses .publish().await — convert to .publish_async()
+- redis_sub/events.rs saga handlers need db_router.get_pool() + apply_rls() before any DB write
+- inventory.reserved, inventory.released event structs need environment: String field
+
+### 18.2 `product-catalog` — Status: ~80% Complete
+
+**Already done:**
+- TenantAuthMiddleware::new() wrapped in main.rs
+- DynamicPoolRouter registered as app data
+
+**Remaining gaps:**
+- Handlers must extract TenantContext and call tenant.apply_rls()
+- All product event structs need tenant_id: Uuid
+- main.rs should pass redis_client to TenantAuthMiddleware::with_redis()
+
+### 18.3 `user-management` — Status: ~70% Complete
+
+**Already done:**
+- StreamPublisher wired in main.rs
+- publish_async used in handlers
+
+**Remaining gaps:**
+- TenantAuthMiddleware NOT yet wrapped in main.rs
+- Protected handlers need TenantContext + apply_rls()
+- User event structs (user.registered, user.updated) need tenant_id: Uuid
+
+### 18.4 `payments` — Status: ~75% Complete
+
+**Already done:**
+- StreamPublisher fully wired (web::Data<StreamPublisher>)
+- publish_payment_event() helper function exists
+
+**Remaining gaps:**
+- TenantAuthMiddleware NOT yet wrapped in main.rs
+- All handlers need TenantContext + db_router + apply_rls()
+- publish_payment_event must include tenant_id: tenant.tenant_id
+
+### 18.5 `logistics` — Status: ~75% Complete
+
+**Already done:**
+- StreamPublisher wired via publisher.rs wrapper
+- Handlers use publish_async
+
+**Remaining gaps:**
+- TenantAuthMiddleware NOT yet wrapped in main.rs
+- All handlers need TenantContext + apply_rls()
+- Shipment event structs need tenant_id: Uuid
+
+### 18.6 `notifications` — Status: ~50% Complete
+
+**Already done:**
+- Redis subscriber listening for events
+- Email/SMS/Push provider abstraction via NotificationProvider
+
+**Remaining gaps:**
+- TenantAuthMiddleware NOT yet wrapped in main.rs
+- Handlers need TenantContext + apply_rls()
+- Notification DB records must include tenant_id
+- Redis subscriber must extract tenant_id from event envelope
+- DynamicPoolRouter needs to be wired in main.rs
+
+### 18.7 `analytics` — Status: ~40% Complete
+
+**Already done:**
+- TimescaleDB integration exists
+
+**Remaining gaps:**
+- TenantAuthMiddleware NOT yet wrapped in main.rs
+- DynamicPoolRouter needs to be wired
+- All analytics write paths must include tenant_id
+- Analytics event consumer must extract tenant_id from Redis stream envelope
+
+### 18.8 `supplier-management` — Status: ~75% Complete
+
+**Already done:**
+- StreamPublisher fully wired via web::Data<StreamPublisher>
+- publish_supplier_event() helper exists
+
+**Remaining gaps:**
+- TenantAuthMiddleware NOT yet wrapped in main.rs
+- Handlers need TenantContext + db_router + apply_rls()
+- Supplier event structs need tenant_id: Uuid
+
+---
+
+## 19. The Headless Commerce API Contract
+
+### 19.1 Catalog API
+
+```
+POST   /v1/products                                    Create product
+GET    /v1/products/{supplier_id}/{product_id}         Get single product
+PUT    /v1/products/{supplier_id}/{product_id}         Update product
+DELETE /v1/products/{supplier_id}/{product_id}         Delete product
+GET    /v1/products/{supplier_id}                      List products for supplier
+POST   /v1/products/bulk                               Bulk create products
+GET    /v1/products/search?q=&category=&min_price=     Search
+POST   /v1/products/{supplier_id}/{product_id}/assets  Register asset
+GET    /v1/assets/cloudinary/sign-upload               Get signed upload URL
+POST   /v1/suppliers                                   Create supplier
+GET    /v1/suppliers/{id}                              Get supplier
+```
+
+### 19.2 Inventory API
+
+```
+POST   /v1/inventory                                   Create inventory record
+GET    /v1/inventory/{supplier_id}                     List all inventory for supplier
+GET    /v1/inventory/{supplier_id}/{product_id}        Get stock for specific product
+POST   /v1/inventory/{supplier_id}/update              Update stock level (+ or -)
+DELETE /v1/inventory/{supplier_id}/{product_id}        Remove inventory record
+```
+
+### 19.3 Orders API
+
+```
+POST   /v1/orders                   Create order
+GET    /v1/orders/{id}              Get order by ID
+PUT    /v1/orders/{id}/status       Update order status
+DELETE /v1/orders/{id}              Cancel order
+```
+
+### 19.4 Payments API
+
+```
+POST   /v1/payments/intent                 Create PaymentIntent
+GET    /v1/payments/intent/{id}            Get PaymentIntent status
+POST   /v1/payments/intent/{id}/confirm    Confirm PaymentIntent
+POST   /v1/payments/intent/{id}/cancel     Cancel PaymentIntent
+POST   /v1/payments/intent/{id}/capture    Capture authorized payment
+POST   /v1/payments/refund/{id}            Create refund
+POST   /v1/payments/webhook                Stripe webhook receiver (no auth)
+```
+
+### 19.5 Notifications API
+
+```
+POST   /v1/notifications                               Send notification
+GET    /v1/notifications                               List notifications
+PUT    /v1/notifications/{id}/read                     Mark as read
+POST   /v1/notification-devices                        Register device (push)
+PUT    /v1/notification-preferences/user/{user_id}     Update preferences
+```
+
+---
+
+## 20. Production Deployment Checklist
+
+### 20.1 Pre-Deploy Verification (per service)
+
+```bash
+# 1. Compile check
+cargo check -p <service-name>
+
+# 2. Run unit tests
+cargo test -p <service-name>
+
+# 3. Verify RLS policies exist on all tables
+psql $DATABASE_URL -c "SELECT tablename, policyname FROM pg_policies;"
+
+# 4. Verify tenant_id index exists on every table
+psql $DATABASE_URL -c "SELECT tablename, indexname FROM pg_indexes WHERE indexname LIKE '%tenant%';"
+
+# 5. Full workspace compile
+cargo check --workspace
+```
+
+### 20.2 Required Environment Variables (per service)
+
+```bash
+DATABASE_URL=          # Service-specific Postgres connection
+REDIS_URL=             # Shared Redis instance
+SECRET=                # JWT signing secret
+SERVICE_PORT=          # Service port
+RUST_LOG=info,<svc>=debug
+```
+
+### 20.3 Health Check Endpoints
+
+Every service MUST expose:
+- `GET /health` → 200 OK
+- `GET /metrics` → Prometheus metrics (via platform::metrics)
+
+---
+
+## 21. Cross-Tenant Data Safety Rules (Non-Negotiable)
+
+1. **Never** pass a raw `PgPool` to a protected handler. Always use `DynamicPoolRouter`.
+2. **Never** skip `tenant.apply_rls()` before a database query in a protected context.
+3. **Never** publish an event to a Redis stream without `tenant_id` in the payload.
+4. **Never** store a webhook secret in plaintext. Only store the SHA-256 hash.
+5. **Never** return data from one tenant in a response to another tenant's API key.
+6. **Never** log the full value of `sk_live_` or `sk_test_` keys. Only log the prefix.
+7. **Always** use `DynamicPoolRouter` so Enterprise tenants get dedicated pool routing.
+8. **Always** verify `envelope.tenant_id == Some(payload.tenant_id)` in Redis Stream consumers.
+
+---
+
+## 22. The `platform` Crate — Public API Reference
+
+### 22.1 `platform::tenant`
+
+```rust
+use platform::tenant::{TenantContext, PricingTier, AuthMethod, Environment};
+
+// Key fields available in every protected handler
+tenant.tenant_id: Uuid           // The tenant's UUID
+tenant.user_id: Option<Uuid>     // End-user ID (JWT path only)
+tenant.tier: PricingTier         // Free | Growth | Enterprise
+tenant.permissions: Vec<String>  // ["orders:read", "orders:write", ...]
+tenant.environment: Environment  // Test | Live
+tenant.request_id: String        // UUID for request tracing
+
+// Apply RLS — CALL THIS BEFORE EVERY QUERY
+tenant.apply_rls(&mut *tx).await?;
+```
+
+### 22.2 `platform::db_router`
+
+```rust
+use platform::db_router::DynamicPoolRouter;
+
+// Register in main.rs
+let db_router = web::Data::new(DynamicPoolRouter::new(pool.clone()));
+
+// Use in handlers — routes Free/Growth to shared, Enterprise to dedicated
+let pool: PgPool = db_router.get_pool(&tenant).await?;
+```
+
+### 22.3 `platform::streams`
+
+```rust
+use platform::streams::{StreamPublisher, consume_json, StreamEnvelope};
+
+// Create publisher
+let publisher = StreamPublisher::new(&redis_url)?;
+let publisher = StreamPublisher::noop(); // for tests
+
+// Fire-and-forget publish (preferred in handlers)
+publisher.publish_async("order.created", my_event);
+
+// Awaitable publish (when error handling needed)
+publisher.publish("order.created", &my_event).await?;
+
+// Consumer (background task)
+consume_json::<MyEvent, _, _>(
+    &redis_url, "my-group", "my-worker", &["order.created"],
+    |envelope: StreamEnvelope<MyEvent>| async move {
+        assert_eq!(envelope.tenant_id, Some(envelope.payload.tenant_id));
+        Ok(())
+    }
+).await?;
+```
+
+### 22.4 `platform::middleware::tenant_middleware`
+
+```rust
+use platform::middleware::tenant_middleware::TenantAuthMiddleware;
+
+// With Redis API key caching
+let mw = TenantAuthMiddleware::new()
+    .with_redis(redis_client.get_ref().clone());
+
+// Apply to Actix App
+App::new().wrap(mw)
+```
+
+---
+
+## 23. Tenant Onboarding Flow
+
+```
+1. Developer signs up at dashboard.commerceplatform.io
+   └─► Creates tenant record in control-plane DB
+   └─► Generates sk_test_..., pk_test_..., whsec_... (test env)
+
+2. Developer makes first API call:
+   curl -X POST https://api.commerceplatform.io/v1/products \
+     -H "Authorization: Bearer sk_test_..." \
+     -d '{"name":"Blue Widget","price":2999,"supplier_id":"..."}'
+
+3. Platform validates the key:
+   - Extracts prefix (first 10 chars)
+   - Checks Redis cache (5-min TTL)
+   - Falls back to control-plane DB query
+   - Builds TenantContext { tenant_id, tier: Free, permissions: [...] }
+
+4. Handler runs with full tenant isolation:
+   - DynamicPoolRouter → shared Postgres pool (Free tier)
+   - apply_rls() sets: SET LOCAL app.current_tenant_id = '<uuid>'
+   - All queries scoped to their data only
+
+5. Event published to Redis stream:
+   XADD stream:products * event_type product.created tenant_id <uuid> payload {...}
+
+6. Developer sees in their dashboard:
+   - API call logged (request_id, latency, status)
+   - Usage: 1/100 products used on Free tier
+   - Event visible in webhook test console
+```
+
+---
+
+*This document is the definitive production-grade reference for the Commerce-as-a-Service platform.*
+*Total sections: 26. Every section maps to real Rust code, SQL, or API contracts in this codebase.*
+
+---
+
+## 24. Developer Experience (DX) & Client SDKs
+
+A headless commerce platform is only as good as the SDKs that wrap it. To achieve Stream/Supabase-level DX, we must provide both Server-Side and Client-Side SDKs.
+
+### 24.1 Client-Side SDK (Frontend, Read-Only)
+
+Used in Next.js, React Native, or mobile apps. Initialized with `pk_test_...` or `pk_live_...`.
+- **Constraint:** Cannot write arbitrary data, cannot create webhooks, cannot view other users' orders.
+- **Scope:** Read products, manage the current user's cart, initiate checkout.
+
+```typescript
+// Example frontend usage
+import { CommerceClient } from '@commerceplatform/js-sdk';
+
+const commerce = new CommerceClient('pk_test_EXAMPLE_KEY_REDACTED', {
+  region: 'us-east-1'
+});
+
+// Fetch products for a storefront
+const products = await commerce.catalog.list({ category: 'electronics', limit: 10 });
+
+// Add to cart and initiate checkout (Headless flow)
+const cart = await commerce.cart.create();
+await cart.addLineItem({ productId: 'prod_123', quantity: 2 });
+const checkoutSession = await commerce.checkout.initiate(cart.id);
+```
+
+### 24.2 Server-Side SDK (Node.js/Python/Go, Full Write Access)
+
+Used in the tenant's secure backend (e.g., Next.js API Routes, Lambda). Initialized with `sk_test_...` or `sk_live_...`.
+- **Constraint:** Complete admin access to the tenant's data isolated by the RLS layer.
+
+```typescript
+// Example backend usage (Next.js API route)
+import { CommerceAdmin } from '@commerceplatform/node-sdk';
+
+const admin = new CommerceAdmin('sk_test_EXAMPLE_KEY_REDACTED');
+
+// Tenant dynamically creates a new supplier
+const supplier = await admin.suppliers.create({
+  name: 'Acme Electronics',
+  payout_routing_number: '123456789'
+});
+
+// Generate a time-scoped signed URL for secure asset upload
+const uploadToken = await admin.assets.generateUploadUrl(supplier.id);
+```
+
+---
+
+## 25. Integrations Model: Native Defaults & BYOP
+
+The true power of this platform lies in its **out-of-the-box native integrations** coupled with absolute freedom for Enterprise scale.
+
+### 25.1 Native Platform Defaults (The "Zero-Config" Path)
+
+When a developer signs up, they shouldn't have to create a Stripe account, configure SendGrid, or wire up a logistics engine to get started. The platform handles it.
+
+- **Payments:** Powered implicitly by the Platform's Master Stripe Connect Account.
+- **Emails:** Handled via the Platform's Native SendGrid setup.
+- **Logistics:** Platform-negotiated shipping rates via ShipEngine.
+
+This allows developers to build a fully functional storefront on Day 1 using nothing but our `sk_test_...` key. The platform takes a fractional fee (e.g., 5%) per transaction for providing the native rails.
+
+### 25.2 Bring Your Own Provider (BYOP) - The Enterprise Escape Hatch
+
+To scale to enterprise tenants, we cannot force them into our native integrations. We must support **BYOP (Bring Your Own Provider)**, allowing them to inject their own API keys into our platform so that we bypass our native layers completely.
+
+#### Provider Configuration Schema
+
+The control-plane database stores encrypted integration credentials for each tenant:
+
+```sql
+CREATE TABLE tenant_integrations (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    tenant_id UUID REFERENCES tenants(id),
+    provider_type VARCHAR(50) NOT NULL, -- e.g., 'PAYMENT', 'LOGISTICS', 'EMAIL'
+    provider_name VARCHAR(50) NOT NULL, -- e.g., 'STRIPE', 'SHIPENGINE', 'SENDGRID'
+    encrypted_credentials JSONB NOT NULL, -- AES-256-GCM encrypted
+    is_active BOOLEAN DEFAULT true,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    UNIQUE (tenant_id, provider_type, provider_name)
+);
+```
+
+#### Seamless Provider Handoff
+
+When a tenant initiates a checkout, our `payments` microservice will:
+1. Check if `tenant_integrations` has an active Stripe configuration for this `tenant_id`.
+2. **If YES (BYOP):** Decrypt the tenant's specific Stripe Secret Key using our internal KMS. Call the Stripe API using *their* key. The funds go directly to the tenant's Stripe account.
+3. **If NO (Native):** Fall back to the platform's Native Stripe Connect integration. The funds flow through our master account, and we trigger a programmatic payout to the supplier.
+
+**Result:** Startups launch instantly using our Native defaults. Enterprise companies migrate securely using BYOP, reducing our platform's regulatory compliance burden.
+
+---
+
+## 26. Headless Checkout Orchestration
+
+A CaaS platform shines during checkout orchestration. It requires coordinating 4 microservices simultaneously via robust Event-Driven sagas.
+
+### 26.1 The Orchestration Saga (Cart to Order)
+
+1. **Frontend:** Calls `POST /v1/checkout/intents` (routed to `order-service`).
+2. **Order Service (Coordinator):** 
+   - Generates a draft `Order` (status: `PENDING`).
+3. **Inventory Service (Sync/Async):** 
+   - `order-service` emits `inventory.reserve`.
+   - `inventory-management` consumes the event, decrements stock, and sets a 15-minute TTL lock in Redis. If stock is unavailable, it fires an `inventory.reserve_failed` event, halting the saga.
+4. **Payment Service (Sync):** 
+   - `order-service` calls `payments` to generate a `PaymentIntent`. 
+   - (This transparently uses the Native Default or the tenant's BYOP Stripe key, as detailed in Section 25).
+5. **Frontend:** Renders the Stripe Elements UI using the returned `client_secret`.
+6. **Payment Webhook (Async):** 
+   - Stripe hits `POST /payments/webhooks`.
+   - `payments` validates the HMAC signature (using the Platform's endpoint secret or the tenant's BYOP webhook secret) and publishes `order.paid`.
+7. **Resolution (Async):**
+   - `order-service` consumes `order.paid` → transitions order to `CONFIRMED`.
+   - `inventory-management` consumes `order.paid` → finalizes the stock deduction (removes TTL).
+   - `logistics` consumes `order.paid` → generates a `Shipment` record and a shipping label (Native or BYOP ShipEngine).
+   - `notifications` consumes `order.paid` → sends order confirmation email to the end-customer (Native or BYOP SendGrid).
+
+### 26.2 Failure Handling & Dead-Letter Queues (DLQ)
+
+If a service is down (e.g., `notifications` goes offline):
+- RabbitMQ retries the `order.paid` event based on exponential backoff.
+- If it fails after 5 retries, the event is routed to a Dead-Letter Queue (`DLQ:notifications`).
+- The Platform Dashboard alerts the tenant, and they can click "Replay Webhooks/Events" from their UI.
+
+---
+
+## 27. Platform Dashboard UI Mapping
+
+To make this platform tangible, this is the bare-minimum UI mapping for the Developer Dashboard (e.g., what the tenant sees at `app.commerceplatform.io`).
+
+### 1. Global Navigation (Sidebar)
+- **Project Selection Dropdown:** Switch between "Acme Prod" and "Acme Staging"
+- **Overview:** High-level metrics
+- **API Keys:** Manage public/secret keys
+- **Webhooks:** Register endpoints & view logs
+- **Integrations:** Configure BYOP
+- **Logs & Analytics:** Raw HTTP request traces
+- **Billing & Usage:** Platform costs
+
+### 2. Overview Screen
+- **Hero Metrics:** API Calls (last 24h), Active Checkouts, Orders Processed, Webhook Delivery Success Rate (%).
+- **Quick Links:** "View Documentation", "Copy API Keys".
+- **Recent Activity:** Feed of recent API errors (e.g., "429 Too Many Requests" or "Webhook Failed").
+
+### 3. API Keys Screen
+- **Environment Toggle:** Live / Test
+- **Standard Keys:** 
+  - `pk_test_EXAMPLE_KEY_REDACTED...` (Visible, click to copy)
+  - `sk_test_EXAMPLE_KEY_REDACTED...` (Hidden, click "Reveal", rotatable)
+- **Restricted Keys (Pro Feature):** 
+  - Table of custom keys with scoped permissions (e.g., `orders:read` only) and IP Allowlist inputs.
+
+### 4. Webhooks Screen
+- **Endpoints Table:** List of registered URLs (e.g., `https://api.acme.com/webhooks`).
+- **Endpoint Detail View:**
+  - **Signing Secret:** `whsec_EXAMPLE_SECRET_REDACTED` (Hidden, used for HMAC validation).
+  - **Event Subscriptions:** Checkboxes for `order.created`, `payment.failed`, `inventory.low_stock`.
+- **Delivery Logs (Crucial DX):**
+  - Table of recent webhook attempts.
+  - Columns: Timestamp, Event Type, HTTP Status (200, 500), Latency.
+  - Click to view exact JSON payload sent and the exact response body received.
+  - "Replay Event" button.
+
+### 5. Integrations Screen (The BYOP Engine)
+- Grid of "Cards" representing platform integrations.
+- **Stripe Card:**
+  - Status: "Using Native Default" (Green badge)
+  - Button: "Connect Custom Stripe Account" -> Opens a modal to input `sk_live_...` and `webhook_secret`.
+- **SendGrid Card:**
+  - Status: "Using Native Default"
+  - Button: "Configure Custom SMTP / SendGrid"
+- **ShipEngine Card:**
+  - Status: "Not Configured"
+  - Button: "Connect Carrier Account"
+
+### 6. Logs & Analytics Screen
+- **API Explorer:** A real-time tail of HTTP requests made by the tenant's API keys.
+- Columns: Method, Endpoint, Status Code, Latency, IP Address.
+- **Filters:** By Date, Status Code (e.g., "Show me all 500s").
+
+### 7. Settings > Billing
+- Current Tier: Free / Growth / Enterprise.
+- Metering progress bars:
+  - "Orders Processed: 8,432 / 10,000"
+  - "API Calls: 1.2M / 2M"
+- Invoice history.

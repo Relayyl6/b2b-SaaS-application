@@ -2,31 +2,30 @@ use crate::models::{
     CreateShipmentRequest, ListShipmentQuery, Shipment, ShipmentStatus, UpdateShipmentStatusRequest,
 };
 use chrono::Utc;
-use sqlx::PgPool;
 use uuid::Uuid;
 
-#[derive(Clone)]
-pub struct LogisticsRepo {
-    pool: PgPool,
-}
+#[derive(Clone, Default)]
+pub struct LogisticsRepo;
 
 impl LogisticsRepo {
-    /// Creates a new instance with the provided dependencies.
-    pub fn new(pool: &PgPool) -> Self {
-        Self { pool: pool.clone() }
+    /// Creates a new instance of LogisticsRepo.
+    pub fn new() -> Self {
+        Self
     }
 
     /// Creates a shipment and publishes logistics.shipment_created.
     pub async fn create_shipment(
         &self,
+        conn: &mut sqlx::PgConnection,
+        tenant_id: Uuid,
         req: &CreateShipmentRequest,
     ) -> Result<Shipment, sqlx::Error> {
         let tracking_number = format!("TRK-{}", Uuid::new_v4().simple());
 
         sqlx::query_as::<_, Shipment>(
             r#"
-            INSERT INTO shipments (id, order_id, user_id, supplier_id, product_id, tracking_number, status, notes)
-            VALUES ($1, $2, $3, $4, $5, $6, 'pending', $7)
+            INSERT INTO shipments (id, tenant_id, order_id, user_id, supplier_id, product_id, tracking_number, status, notes)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, 'pending', $8)
             ON CONFLICT(order_id) DO UPDATE SET
                 notes = COALESCE(EXCLUDED.notes, shipments.notes),
                 updated_at = NOW()
@@ -34,35 +33,45 @@ impl LogisticsRepo {
             "#,
         )
         .bind(Uuid::new_v4())
+        .bind(tenant_id)
         .bind(req.order_id)
         .bind(req.user_id)
         .bind(req.supplier_id)
         .bind(req.product_id)
         .bind(tracking_number)
         .bind(&req.notes)
-        .fetch_one(&self.pool)
+        .fetch_one(conn)
         .await
     }
 
     /// Returns shipment details by id.
-    pub async fn get_shipment(&self, shipment_id: Uuid) -> Result<Shipment, sqlx::Error> {
+    pub async fn get_shipment(
+        &self,
+        conn: &mut sqlx::PgConnection,
+        shipment_id: Uuid,
+    ) -> Result<Shipment, sqlx::Error> {
         sqlx::query_as::<_, Shipment>("SELECT * FROM shipments WHERE id = $1")
             .bind(shipment_id)
-            .fetch_one(&self.pool)
+            .fetch_one(conn)
             .await
     }
 
     /// Returns one shipment by order id.
-    pub async fn get_by_order_id(&self, order_id: Uuid) -> Result<Shipment, sqlx::Error> {
+    pub async fn get_by_order_id(
+        &self,
+        conn: &mut sqlx::PgConnection,
+        order_id: Uuid,
+    ) -> Result<Shipment, sqlx::Error> {
         sqlx::query_as::<_, Shipment>("SELECT * FROM shipments WHERE order_id = $1")
             .bind(order_id)
-            .fetch_one(&self.pool)
+            .fetch_one(conn)
             .await
     }
 
     /// Returns supplier shipments using filter and pagination query fields.
     pub async fn list_supplier_shipments(
         &self,
+        conn: &mut sqlx::PgConnection,
         supplier_id: Uuid,
         query: &ListShipmentQuery,
     ) -> Result<Vec<Shipment>, sqlx::Error> {
@@ -83,14 +92,14 @@ impl LogisticsRepo {
         .bind(query.status.as_ref())
         .bind(limit)
         .bind(offset)
-        .fetch_all(&self.pool)
+        .fetch_all(conn)
         .await
     }
 
     /// Updates shipment status and publishes logistics.shipment_updated.
-
     pub async fn update_status(
         &self,
+        conn: &mut sqlx::PgConnection,
         shipment_id: Uuid,
         req: &UpdateShipmentStatusRequest,
     ) -> Result<Shipment, sqlx::Error> {
@@ -129,7 +138,7 @@ impl LogisticsRepo {
         .bind(dispatched_at)
         .bind(delivered_at)
         .bind(shipment_id)
-        .fetch_optional(&self.pool)
+        .fetch_optional(conn)
         .await?;
 
         match res {
@@ -139,8 +148,11 @@ impl LogisticsRepo {
     }
 
     /// Cancels the shipment for an order when cancellation is allowed.
-    /// Cancels the shipment for the given order if the shipment has not been delivered.
-    pub async fn cancel_by_order_id(&self, order_id: Uuid) -> Result<Shipment, sqlx::Error> {
+    pub async fn cancel_by_order_id(
+        &self,
+        conn: &mut sqlx::PgConnection,
+        order_id: Uuid,
+    ) -> Result<Shipment, sqlx::Error> {
         sqlx::query_as::<_, Shipment>(
             r#"
             UPDATE shipments
@@ -151,7 +163,7 @@ impl LogisticsRepo {
             "#,
         )
         .bind(order_id)
-        .fetch_one(&self.pool)
+        .fetch_one(conn)
         .await
     }
 }
@@ -165,9 +177,11 @@ mod tests {
     #[sqlx::test]
     #[ignore]
     async fn test_state_transitions_in_db(pool: sqlx::PgPool) {
-        let repo = LogisticsRepo::new(&pool);
+        let repo = LogisticsRepo::new();
+        let tenant_id = Uuid::new_v4();
         let order_id = Uuid::new_v4();
-        
+        let mut tx = pool.begin().await.unwrap();
+
         let req = CreateShipmentRequest {
             order_id,
             user_id: Uuid::new_v4(),
@@ -177,7 +191,7 @@ mod tests {
         };
 
         // 1. Create a shipment
-        let shipment = repo.create_shipment(&req).await.unwrap();
+        let shipment = repo.create_shipment(&mut *tx, tenant_id, &req).await.unwrap();
         assert_eq!(shipment.status, ShipmentStatus::Pending);
 
         // 2. Invalid transition (Pending -> Delivered)
@@ -185,7 +199,7 @@ mod tests {
             status: ShipmentStatus::Delivered,
             notes: None,
         };
-        let result = repo.update_status(shipment.id, &invalid_update).await;
+        let result = repo.update_status(&mut *tx, shipment.id, &invalid_update).await;
         
         // Because of the WHERE clause in update_status, 0 rows are updated, returning RowNotFound.
         assert!(matches!(result, Err(sqlx::Error::RowNotFound)));
@@ -195,7 +209,7 @@ mod tests {
             status: ShipmentStatus::Intransit,
             notes: None,
         };
-        let updated = repo.update_status(shipment.id, &valid_update).await.unwrap();
+        let updated = repo.update_status(&mut *tx, shipment.id, &valid_update).await.unwrap();
         assert_eq!(updated.status, ShipmentStatus::Intransit);
     }
 }

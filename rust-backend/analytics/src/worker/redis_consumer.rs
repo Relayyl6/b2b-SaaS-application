@@ -63,15 +63,23 @@ pub async fn run_redis_consumer(
                     }
                 };
 
-                let tenant_id = envelope.tenant_id.or(analytics_event.tenant_id);
+                let envelope_tenant_id = envelope.tenant_id;
+                let payload_tenant_id = analytics_event.tenant_id;
+
+                // Safety check: Assert envelope.tenant_id matches payload.tenant_id if both are present
+                if let (Some(env_tid), Some(pay_tid)) = (envelope_tenant_id, payload_tenant_id) {
+                    if env_tid != pay_tid {
+                        warn!(%event_type, %env_tid, %pay_tid, "Mismatched envelope and payload tenant_id — overriding with envelope tenant_id");
+                    }
+                }
+
+                let tenant_id = envelope_tenant_id.or(payload_tenant_id);
                 if tenant_id.is_none() || tenant_id == Some(uuid::Uuid::nil()) {
                     warn!(%event_type, stream = %envelope.stream, "Missing tenant_id in analytics stream event — skipping event ingestion");
                     return Ok(());
                 }
 
-                if analytics_event.tenant_id.is_none() {
-                    analytics_event.tenant_id = tenant_id;
-                }
+                analytics_event.tenant_id = tenant_id;
 
                 let event = match Event::new(analytics_event) {
                     Ok(ev) => ev,
@@ -125,16 +133,25 @@ async fn insert_event(pool: &PgPool, event: &Event) -> Result<(), sqlx::Error> {
         .and_then(|s| s.parse().ok())
         .unwrap_or_else(|| chrono::Utc::now());
 
+    let tenant_id: Option<uuid::Uuid> = event.tenant_id.or_else(|| {
+        event
+            .data
+            .get("tenant_id")
+            .and_then(|v| v.as_str())
+            .and_then(|s| uuid::Uuid::parse_str(s).ok())
+    });
+
     sqlx::query(
         r#"
-            INSERT INTO analytics.events (id, event_type, event_timestamp, data)
-            VALUES ($1, $2, $3, $4)
+            INSERT INTO analytics.events (id, event_type, event_timestamp, data, tenant_id)
+            VALUES ($1, $2, $3, $4, $5)
         "#,
     )
     .bind(id)
     .bind(&event.event_type)
     .bind(timestamp)
     .bind(&event.data)
+    .bind(tenant_id)
     .execute(pool)
     .await?;
 

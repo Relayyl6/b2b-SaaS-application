@@ -1,7 +1,18 @@
-target/
+# Rust (Crucial for Microservices/Monorepos)
+**/target/
+**/*.rs.bk
+Cargo.lock
+
+# Version Control & IDEs
 .git/
-**/.env
-**/.env.*
 .github/
 .idea/
 .vscode/
+
+# Environment Variables (Security)
+**/.env
+**/.env.*
+
+# OS & Temp Files
+**/.DS_Store
+**/Thumbs.db

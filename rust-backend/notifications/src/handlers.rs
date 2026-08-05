@@ -8,11 +8,23 @@ use crate::models::{
 use crate::provider::NotificationProvider;
 
 pub async fn create_notification(
-    repo: web::Data<NotificationRepo>,
+    tenant: web::ReqData<platform::tenant::TenantContext>,
+    db_router: web::Data<platform::db_router::DynamicPoolRouter>,
     provider: web::Data<NotificationProvider>,
     req: web::Json<CreateNotificationRequest>,
 ) -> impl Responder {
     let request = req.into_inner();
+    let pool = match db_router.get_pool(&tenant).await {
+        Ok(pool) => pool,
+        Err(e) => return HttpResponse::InternalServerError().body(format!("db pool error: {e}")),
+    };
+    let mut tx = match pool.begin().await {
+        Ok(tx) => tx,
+        Err(e) => return HttpResponse::InternalServerError().body(format!("db error: {e}")),
+    };
+    if let Err(e) = tenant.apply_rls(&mut *tx).await {
+        return HttpResponse::InternalServerError().body(format!("rls error: {e}"));
+    }
 
     if request.channel == NotificationChannel::Push && request.recipient.is_none() {
         let Some(user_id) = request.user_id else {
@@ -20,7 +32,7 @@ pub async fn create_notification(
                 .body("push notifications require either recipient push token or user_id");
         };
 
-        let devices = match repo.list_user_devices(user_id).await {
+        let devices = match NotificationRepo::list_user_devices(&mut *tx, tenant.tenant_id, user_id).await {
             Ok(devices) => devices,
             Err(e) => return HttpResponse::InternalServerError().body(format!("db error: {e}")),
         };
@@ -50,12 +62,12 @@ pub async fn create_notification(
             }
             device_request.payload = Some(payload);
 
-            match repo.create(&device_request).await {
+            match NotificationRepo::create(&mut *tx, tenant.tenant_id, &device_request).await {
                 Ok(notification) => {
                     let id = notification.id;
                     let delivered = match provider.send(&notification).await {
-                        Ok(()) => repo.mark_sent(id).await,
-                        Err(error) => repo.mark_failed(id, &error).await,
+                        Ok(()) => NotificationRepo::mark_sent(&mut *tx, id).await,
+                        Err(error) => NotificationRepo::mark_failed(&mut *tx, id, &error).await,
                     };
 
                     match delivered {
@@ -72,22 +84,29 @@ pub async fn create_notification(
             }
         }
 
+        if let Err(e) = tx.commit().await {
+            return HttpResponse::InternalServerError().body(format!("db commit error: {e}"));
+        }
         return HttpResponse::Created().json(sent);
     }
 
-    match repo.create(&request).await {
+    match NotificationRepo::create(&mut *tx, tenant.tenant_id, &request).await {
         Ok(notification) => {
             let id = notification.id;
-            match provider.send(&notification).await {
-                Ok(()) => match repo.mark_sent(id).await {
+            let res = match provider.send(&notification).await {
+                Ok(()) => match NotificationRepo::mark_sent(&mut *tx, id).await {
                     Ok(sent) => HttpResponse::Created().json(sent),
                     Err(e) => HttpResponse::InternalServerError().body(format!("db error: {e}")),
                 },
-                Err(error) => match repo.mark_failed(id, &error).await {
+                Err(error) => match NotificationRepo::mark_failed(&mut *tx, id, &error).await {
                     Ok(failed) => HttpResponse::Accepted().json(failed),
                     Err(e) => HttpResponse::InternalServerError().body(format!("db error: {e}")),
                 },
+            };
+            if let Err(e) = tx.commit().await {
+                return HttpResponse::InternalServerError().body(format!("db commit error: {e}"));
             }
+            res
         }
         Err(sqlx::Error::Protocol(msg)) if msg.contains("opted out") => {
             HttpResponse::Accepted().json(serde_json::json!({
@@ -100,20 +119,46 @@ pub async fn create_notification(
 }
 
 pub async fn list_notifications(
-    repo: web::Data<NotificationRepo>,
+    tenant: web::ReqData<platform::tenant::TenantContext>,
+    db_router: web::Data<platform::db_router::DynamicPoolRouter>,
     query: web::Query<ListNotificationsQuery>,
 ) -> impl Responder {
-    match repo.list(&query.into_inner()).await {
+    let pool = match db_router.get_pool(&tenant).await {
+        Ok(pool) => pool,
+        Err(e) => return HttpResponse::InternalServerError().body(format!("db pool error: {e}")),
+    };
+    let mut tx = match pool.begin().await {
+        Ok(tx) => tx,
+        Err(e) => return HttpResponse::InternalServerError().body(format!("db error: {e}")),
+    };
+    if let Err(e) = tenant.apply_rls(&mut *tx).await {
+        return HttpResponse::InternalServerError().body(format!("rls error: {e}"));
+    }
+
+    match NotificationRepo::list(&mut *tx, tenant.tenant_id, &query.into_inner()).await {
         Ok(notifications) => HttpResponse::Ok().json(notifications),
         Err(e) => HttpResponse::InternalServerError().body(format!("db error: {e}")),
     }
 }
 
 pub async fn get_notification(
-    repo: web::Data<NotificationRepo>,
+    tenant: web::ReqData<platform::tenant::TenantContext>,
+    db_router: web::Data<platform::db_router::DynamicPoolRouter>,
     path: web::Path<Uuid>,
 ) -> impl Responder {
-    match repo.get(path.into_inner()).await {
+    let pool = match db_router.get_pool(&tenant).await {
+        Ok(pool) => pool,
+        Err(e) => return HttpResponse::InternalServerError().body(format!("db pool error: {e}")),
+    };
+    let mut tx = match pool.begin().await {
+        Ok(tx) => tx,
+        Err(e) => return HttpResponse::InternalServerError().body(format!("db error: {e}")),
+    };
+    if let Err(e) = tenant.apply_rls(&mut *tx).await {
+        return HttpResponse::InternalServerError().body(format!("rls error: {e}"));
+    }
+
+    match NotificationRepo::get(&mut *tx, tenant.tenant_id, path.into_inner()).await {
         Ok(notification) => HttpResponse::Ok().json(notification),
         Err(sqlx::Error::RowNotFound) => HttpResponse::NotFound().body("notification not found"),
         Err(e) => HttpResponse::InternalServerError().body(format!("db error: {e}")),
@@ -121,64 +166,154 @@ pub async fn get_notification(
 }
 
 pub async fn mark_notification_read(
-    repo: web::Data<NotificationRepo>,
+    tenant: web::ReqData<platform::tenant::TenantContext>,
+    db_router: web::Data<platform::db_router::DynamicPoolRouter>,
     path: web::Path<Uuid>,
 ) -> impl Responder {
-    match repo.mark_read(path.into_inner()).await {
-        Ok(notification) => HttpResponse::Ok().json(notification),
+    let pool = match db_router.get_pool(&tenant).await {
+        Ok(pool) => pool,
+        Err(e) => return HttpResponse::InternalServerError().body(format!("db pool error: {e}")),
+    };
+    let mut tx = match pool.begin().await {
+        Ok(tx) => tx,
+        Err(e) => return HttpResponse::InternalServerError().body(format!("db error: {e}")),
+    };
+    if let Err(e) = tenant.apply_rls(&mut *tx).await {
+        return HttpResponse::InternalServerError().body(format!("rls error: {e}"));
+    }
+
+    match NotificationRepo::mark_read(&mut *tx, tenant.tenant_id, path.into_inner()).await {
+        Ok(notification) => {
+            let _ = tx.commit().await;
+            HttpResponse::Ok().json(notification)
+        }
         Err(sqlx::Error::RowNotFound) => HttpResponse::NotFound().body("notification not found"),
         Err(e) => HttpResponse::InternalServerError().body(format!("db error: {e}")),
     }
 }
 
 pub async fn register_device(
-    repo: web::Data<NotificationRepo>,
+    tenant: web::ReqData<platform::tenant::TenantContext>,
+    db_router: web::Data<platform::db_router::DynamicPoolRouter>,
     req: web::Json<RegisterDeviceRequest>,
 ) -> impl Responder {
-    match repo.register_device(&req).await {
-        Ok(device) => HttpResponse::Created().json(device),
+    let pool = match db_router.get_pool(&tenant).await {
+        Ok(pool) => pool,
+        Err(e) => return HttpResponse::InternalServerError().body(format!("db pool error: {e}")),
+    };
+    let mut tx = match pool.begin().await {
+        Ok(tx) => tx,
+        Err(e) => return HttpResponse::InternalServerError().body(format!("db error: {e}")),
+    };
+    if let Err(e) = tenant.apply_rls(&mut *tx).await {
+        return HttpResponse::InternalServerError().body(format!("rls error: {e}"));
+    }
+
+    match NotificationRepo::register_device(&mut *tx, tenant.tenant_id, &req).await {
+        Ok(device) => {
+            let _ = tx.commit().await;
+            HttpResponse::Created().json(device)
+        }
         Err(e) => HttpResponse::InternalServerError().body(format!("db error: {e}")),
     }
 }
 
 pub async fn list_user_devices(
-    repo: web::Data<NotificationRepo>,
+    tenant: web::ReqData<platform::tenant::TenantContext>,
+    db_router: web::Data<platform::db_router::DynamicPoolRouter>,
     path: web::Path<Uuid>,
 ) -> impl Responder {
-    match repo.list_user_devices(path.into_inner()).await {
+    let pool = match db_router.get_pool(&tenant).await {
+        Ok(pool) => pool,
+        Err(e) => return HttpResponse::InternalServerError().body(format!("db pool error: {e}")),
+    };
+    let mut tx = match pool.begin().await {
+        Ok(tx) => tx,
+        Err(e) => return HttpResponse::InternalServerError().body(format!("db error: {e}")),
+    };
+    if let Err(e) = tenant.apply_rls(&mut *tx).await {
+        return HttpResponse::InternalServerError().body(format!("rls error: {e}"));
+    }
+
+    match NotificationRepo::list_user_devices(&mut *tx, tenant.tenant_id, path.into_inner()).await {
         Ok(devices) => HttpResponse::Ok().json(devices),
         Err(e) => HttpResponse::InternalServerError().body(format!("db error: {e}")),
     }
 }
 
 pub async fn disable_device(
-    repo: web::Data<NotificationRepo>,
+    tenant: web::ReqData<platform::tenant::TenantContext>,
+    db_router: web::Data<platform::db_router::DynamicPoolRouter>,
     path: web::Path<Uuid>,
 ) -> impl Responder {
-    match repo.disable_device(path.into_inner()).await {
-        Ok(device) => HttpResponse::Ok().json(device),
+    let pool = match db_router.get_pool(&tenant).await {
+        Ok(pool) => pool,
+        Err(e) => return HttpResponse::InternalServerError().body(format!("db pool error: {e}")),
+    };
+    let mut tx = match pool.begin().await {
+        Ok(tx) => tx,
+        Err(e) => return HttpResponse::InternalServerError().body(format!("db error: {e}")),
+    };
+    if let Err(e) = tenant.apply_rls(&mut *tx).await {
+        return HttpResponse::InternalServerError().body(format!("rls error: {e}"));
+    }
+
+    match NotificationRepo::disable_device(&mut *tx, tenant.tenant_id, path.into_inner()).await {
+        Ok(device) => {
+            let _ = tx.commit().await;
+            HttpResponse::Ok().json(device)
+        }
         Err(sqlx::Error::RowNotFound) => HttpResponse::NotFound().body("device not found"),
         Err(e) => HttpResponse::InternalServerError().body(format!("db error: {e}")),
     }
 }
 
 pub async fn get_preferences(
-    repo: web::Data<NotificationRepo>,
+    tenant: web::ReqData<platform::tenant::TenantContext>,
+    db_router: web::Data<platform::db_router::DynamicPoolRouter>,
     path: web::Path<Uuid>,
 ) -> impl Responder {
-    match repo.get_preferences(path.into_inner()).await {
+    let pool = match db_router.get_pool(&tenant).await {
+        Ok(pool) => pool,
+        Err(e) => return HttpResponse::InternalServerError().body(format!("db pool error: {e}")),
+    };
+    let mut tx = match pool.begin().await {
+        Ok(tx) => tx,
+        Err(e) => return HttpResponse::InternalServerError().body(format!("db error: {e}")),
+    };
+    if let Err(e) = tenant.apply_rls(&mut *tx).await {
+        return HttpResponse::InternalServerError().body(format!("rls error: {e}"));
+    }
+
+    match NotificationRepo::get_preferences(&mut *tx, tenant.tenant_id, path.into_inner()).await {
         Ok(prefs) => HttpResponse::Ok().json(prefs),
         Err(e) => HttpResponse::InternalServerError().body(format!("db error: {e}")),
     }
 }
 
 pub async fn update_preferences(
-    repo: web::Data<NotificationRepo>,
+    tenant: web::ReqData<platform::tenant::TenantContext>,
+    db_router: web::Data<platform::db_router::DynamicPoolRouter>,
     path: web::Path<Uuid>,
     req: web::Json<UpdatePreferencesRequest>,
 ) -> impl Responder {
-    match repo.update_preferences(path.into_inner(), &req).await {
-        Ok(prefs) => HttpResponse::Ok().json(prefs),
+    let pool = match db_router.get_pool(&tenant).await {
+        Ok(pool) => pool,
+        Err(e) => return HttpResponse::InternalServerError().body(format!("db pool error: {e}")),
+    };
+    let mut tx = match pool.begin().await {
+        Ok(tx) => tx,
+        Err(e) => return HttpResponse::InternalServerError().body(format!("db error: {e}")),
+    };
+    if let Err(e) = tenant.apply_rls(&mut *tx).await {
+        return HttpResponse::InternalServerError().body(format!("rls error: {e}"));
+    }
+
+    match NotificationRepo::update_preferences(&mut *tx, tenant.tenant_id, path.into_inner(), &req).await {
+        Ok(prefs) => {
+            let _ = tx.commit().await;
+            HttpResponse::Ok().json(prefs)
+        }
         Err(e) => HttpResponse::InternalServerError().body(format!("db error: {e}")),
     }
 }

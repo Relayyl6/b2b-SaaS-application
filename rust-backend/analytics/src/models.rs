@@ -44,6 +44,7 @@ pub struct AnalyticsEvent {
 #[derive(Serialize, Deserialize, Debug, Clone, FromRow)]
 pub struct Event {
     pub id: Option<Uuid>,
+    pub tenant_id: Option<Uuid>,
     pub event_type: String,
     pub event_timestamp: Option<DateTime<Utc>>,
     pub data: serde_json::Value,

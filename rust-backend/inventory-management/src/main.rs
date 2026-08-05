@@ -1,4 +1,3 @@
-
 // src/main.rs
 mod db;
 mod handlers;
@@ -12,6 +11,8 @@ use crate::redis_sub::listen_to_redis_events;
 use actix_web::{web, App, HttpServer};
 use dotenvy::dotenv;
 use platform::{metrics, observability};
+use platform::db_router::DynamicPoolRouter;
+use platform::middleware::tenant_middleware::TenantAuthMiddleware;
 use redis::Client;
 use sqlx::postgres::PgPoolOptions;
 use std::env;
@@ -40,9 +41,7 @@ async fn main() -> std::io::Result<()> {
         std::process::exit(1);
     }
 
-    let repo = web::Data::new(db::InventoryRepo::new(&pool));
-
-    // let redis_client = web::Data::new(Client::open(redis_url.clone()));
+    let db_router = web::Data::new(DynamicPoolRouter::new(pool.clone()));
 
     let redis_client = web::Data::new(
         redis_url
@@ -76,8 +75,11 @@ async fn main() -> std::io::Result<()> {
 
     // spawn Redis listener in background
     let pool_clone = pool.clone();
-    let repo_clone = repo.clone();
     let redis_pub_clone = redis_pub.clone();
+
+    // Since we removed InventoryRepo instantiation, we need to pass db_router to listen_to_redis_events?
+    // Wait, listen_to_redis_events in redis_sub.rs expects repo_clone. Let's look at redis_sub.rs later and pass db_router instead or just empty InventoryRepo.
+    let repo_clone = web::Data::new(db::InventoryRepo {});
 
     spawn(async move {
         let _ = listen_to_redis_events(pool_clone, repo_clone, redis_pub_clone).await;
@@ -86,8 +88,10 @@ async fn main() -> std::io::Result<()> {
     tracing::info!("Inventory Service listening on 0.0.0.0:{}", port);
 
     HttpServer::new(move || {
+        let tenant_middleware = TenantAuthMiddleware::with_redis(redis_client.get_ref().clone());
         App::new()
-            .app_data(repo.clone())
+            .wrap(tenant_middleware)
+            .app_data(db_router.clone())
             .app_data(redis_pub.clone())
             .app_data(redis_client.clone())
             .route("/metrics", web::get().to(metrics::metrics_handler))

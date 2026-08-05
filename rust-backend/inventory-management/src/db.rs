@@ -1,29 +1,24 @@
 // src/db.rs
 use crate::models::{CreateInventoryRequest, Inventory, UpdateStockRequest};
-use sqlx::PgPool;
 use uuid::Uuid;
 
-#[derive(Clone)]
-pub struct InventoryRepo {
-    pool: PgPool,
-}
+pub struct InventoryRepo {}
 
 impl InventoryRepo {
-    pub fn new(pool: &PgPool) -> Self {
-        Self { pool: pool.clone() }
-    }
-
-    pub async fn get_by_supplier(&self, supplier_id: Uuid) -> Result<Vec<Inventory>, sqlx::Error> {
+    pub async fn get_by_supplier(
+        tx: &mut sqlx::PgConnection,
+        supplier_id: Uuid,
+    ) -> Result<Vec<Inventory>, sqlx::Error> {
         sqlx::query_as::<_, Inventory>(
             "SELECT * FROM inventory WHERE supplier_id = $1 ORDER BY name",
         )
         .bind(supplier_id)
-        .fetch_all(&self.pool)
+        .fetch_all(tx)
         .await
     }
 
     pub async fn update_stock(
-        &self,
+        tx: &mut sqlx::PgConnection,
         supplier_id: Uuid,
         req: &UpdateStockRequest,
     ) -> Result<Inventory, sqlx::Error> {
@@ -69,12 +64,12 @@ impl InventoryRepo {
         .bind(supplier_id)
         .bind(req.product_id)
         .bind(req.reserved)
-        .fetch_one(&self.pool)
+        .fetch_one(tx)
         .await
     }
 
     pub async fn create_inventory_item(
-        &self,
+        tx: &mut sqlx::PgConnection,
         req: &CreateInventoryRequest,
     ) -> Result<Inventory, sqlx::Error> {
         sqlx::query_as::<_, Inventory>(
@@ -93,12 +88,12 @@ impl InventoryRepo {
         .bind(&req.description)
         .bind(req.price)
         .bind(&req.category)
-        .fetch_one(&self.pool)
+        .fetch_one(tx)
         .await
     }
 
     pub async fn get_one(
-        &self,
+        tx: &mut sqlx::PgConnection,
         supplier_id: Uuid,
         product_id: Uuid,
     ) -> Result<Inventory, sqlx::Error> {
@@ -110,12 +105,12 @@ impl InventoryRepo {
         )
         .bind(supplier_id)
         .bind(product_id)
-        .fetch_one(&self.pool)
+        .fetch_one(tx)
         .await
     }
 
     pub async fn delete_product(
-        &self,
+        tx: &mut sqlx::PgConnection,
         supplier_id: Uuid,
         product_id: Uuid,
     ) -> Result<u64, sqlx::Error> {
@@ -124,7 +119,7 @@ impl InventoryRepo {
         )
         .bind(supplier_id)
         .bind(product_id)
-        .execute(&self.pool)
+        .execute(tx)
         .await?;
 
         Ok(result.rows_affected())

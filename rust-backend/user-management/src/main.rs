@@ -19,8 +19,8 @@ use crate::protected::handlers as protected_handlers;
 use crate::unprotected::handlers as unprotected_handlers;
 use platform::{metrics, observability};
 
-use middleware::authmiddleware::AuthMiddleware;
-
+use platform::middleware::tenant_middleware::TenantAuthMiddleware;
+use platform::db_router::DynamicPoolRouter;
 // use protected::handlers;
 
 // use crate::unhandlers::{sign_up_user, sign_in_user, sign_out_user}
@@ -49,7 +49,7 @@ async fn main() -> std::io::Result<()> {
 
     let repo = web::Data::new(UserRepo::new(pool.clone()));
 
-
+    let db_router = web::Data::new(DynamicPoolRouter::new(pool.clone()));
     let redis_pub = match &redis_url {
         Some(url) => match platform::streams::StreamPublisher::new(url) {
             Ok(pubw) => web::Data::new(pubw),
@@ -69,8 +69,8 @@ async fn main() -> std::io::Result<()> {
     let redis_client_inner = RedisClient::open(redis_url_str).expect("redis client");
     let redis_client = web::Data::new(redis_client_inner.clone());
 
-    let middleware = AuthMiddleware::new(pool.clone(), jwt_secret.clone(), Some(redis_client_inner));
-
+    let middleware = TenantAuthMiddleware::with_redis(redis_client_inner.clone())
+        .with_secret(jwt_secret.clone());
     tracing::info!("User Management Service listening on 0.0.0.0:{}", port);
 
     HttpServer::new(move || {
@@ -78,6 +78,7 @@ async fn main() -> std::io::Result<()> {
             .app_data(repo.clone())
             .app_data(redis_pub.clone())
             .app_data(redis_client.clone())
+            .app_data(db_router.clone())
             .service(
                 web::scope("/protected") // all /protected/* routes
                     .wrap(middleware.clone()) // middleware only applies here

@@ -6,9 +6,10 @@ mod stripe;
 
 use actix_web::{web, App, HttpServer};
 use dotenvy::dotenv;
-use platform::{metrics, observability, streams::StreamPublisher};
+use platform::{metrics, observability, streams::StreamPublisher, middleware::tenant_middleware::TenantAuthMiddleware, db_router::DynamicPoolRouter};
 use sqlx::postgres::PgPoolOptions;
 use std::env;
+use redis::Client as RedisClient;
 
 use crate::db::PaymentRepo;
 
@@ -20,6 +21,14 @@ async fn main() -> std::io::Result<()> {
 
     let database_url = env::var("DATABASE_URL").expect("DATABASE_URL must be set");
     let redis_url = env::var("REDIS_URL").ok();
+    let redis_raw_client = RedisClient::open(
+        redis_url
+            .clone()
+            .unwrap_or_else(|| "redis://127.0.0.1:6379".to_string()),
+    )
+    .expect("redis client");
+    let redis_client = web::Data::new(redis_raw_client.clone());
+
     let port = env::var("SERVICE_PORT")
         .or_else(|_| env::var("PORT"))
         .unwrap_or_else(|_| "3010".to_string());
@@ -35,7 +44,8 @@ async fn main() -> std::io::Result<()> {
         .await
         .expect("migrations failed");
 
-    let repo = web::Data::new(PaymentRepo::new(pool));
+    let repo = web::Data::new(PaymentRepo::new(pool.clone()));
+    let db_router = web::Data::new(DynamicPoolRouter::new(pool.clone()));
     let publisher = web::Data::new(match redis_url {
         Some(url) => StreamPublisher::new(&url).unwrap_or_else(|_| StreamPublisher::noop()),
         None => StreamPublisher::noop(),
@@ -51,36 +61,42 @@ async fn main() -> std::io::Result<()> {
     HttpServer::new(move || {
         App::new()
             .app_data(repo.clone())
+            .app_data(db_router.clone())
             .app_data(publisher.clone())
+            .app_data(redis_client.clone())
             .route("/health", web::get().to(handlers::health))
             .route("/metrics", web::get().to(metrics::metrics_handler))
-            .route(
-                "/payments/intents",
-                web::post().to(handlers::create_payment_intent),
-            )
-            .route(
-                "/payments/intents/{id}",
-                web::get().to(handlers::get_payment_intent),
-            )
-            .route(
-                "/payments/intents/{id}/succeed",
-                web::post().to(handlers::mark_payment_succeeded),
-            )
-            .route(
-                "/payments/intents/{id}/fail",
-                web::post().to(handlers::mark_payment_failed),
-            )
             .route(
                 "/payments/webhooks",
                 web::post().to(handlers::payment_webhook),
             )
-            .route(
-                "/payments/intents/{id}/refund",
-                web::post().to(handlers::refund_payment_endpoint),
-            )
-            .route(
-                "/payments/intents/{id}/transfer",
-                web::post().to(handlers::transfer_payment_endpoint),
+            .service(
+                web::scope("")
+                    .wrap(TenantAuthMiddleware::with_redis(redis_raw_client.clone()))
+                    .route(
+                        "/payments/intents",
+                        web::post().to(handlers::create_payment_intent),
+                    )
+                    .route(
+                        "/payments/intents/{id}",
+                        web::get().to(handlers::get_payment_intent),
+                    )
+                    .route(
+                        "/payments/intents/{id}/succeed",
+                        web::post().to(handlers::mark_payment_succeeded),
+                    )
+                    .route(
+                        "/payments/intents/{id}/fail",
+                        web::post().to(handlers::mark_payment_failed),
+                    )
+                    .route(
+                        "/payments/intents/{id}/refund",
+                        web::post().to(handlers::refund_payment_endpoint),
+                    )
+                    .route(
+                        "/payments/intents/{id}/transfer",
+                        web::post().to(handlers::transfer_payment_endpoint),
+                    ),
             )
     })
     .bind(format!("0.0.0.0:{port}"))?

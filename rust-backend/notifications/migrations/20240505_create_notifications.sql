@@ -74,3 +74,14 @@ CREATE TABLE IF NOT EXISTS notification_devices (
 
 CREATE INDEX IF NOT EXISTS idx_notification_devices_user_enabled
     ON notification_devices(user_id, enabled, last_seen_at DESC);
+
+CREATE TABLE IF NOT EXISTS notification_preferences (
+    user_id UUID PRIMARY KEY,
+    email_enabled BOOLEAN NOT NULL DEFAULT TRUE,
+    sms_enabled BOOLEAN NOT NULL DEFAULT TRUE,
+    push_enabled BOOLEAN NOT NULL DEFAULT TRUE,
+    in_app_enabled BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
