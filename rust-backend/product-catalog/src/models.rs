@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
 use uuid::Uuid;
 
-#[derive(Debug, Serialize, Deserialize, FromRow)]
+#[derive(Debug, Serialize, Deserialize, FromRow, utoipa::ToSchema)]
 pub struct Product {
     pub id: Uuid,
     pub tenant_id: Uuid,
@@ -24,7 +24,7 @@ pub struct Product {
     pub deleted_at: Option<DateTime<Utc>>,
 }
 
-#[derive(Debug, Serialize, Deserialize, FromRow)]
+#[derive(Debug, Serialize, Deserialize, FromRow, utoipa::ToSchema)]
 pub struct ProductAsset {
     pub id: Uuid,
     pub tenant_id: Uuid,
@@ -44,7 +44,7 @@ pub struct ProductAsset {
 }
 
 #[allow(dead_code)]
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct CreateProductRequest {
     pub product_id: Option<Uuid>,
     pub supplier_id: Uuid,
@@ -61,7 +61,7 @@ pub struct CreateProductRequest {
 }
 
 #[allow(dead_code)]
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct UpdateProductRequest {
     pub product_id: Uuid,
     pub name: Option<String>,
@@ -77,12 +77,12 @@ pub struct UpdateProductRequest {
     pub variants: Option<serde_json::Value>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct BulkCreateRequest {
     pub products: Vec<CreateProductRequest>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct RegisterProductAssetRequest {
     pub provider: Option<String>,
     pub public_id: String,
@@ -96,13 +96,13 @@ pub struct RegisterProductAssetRequest {
     pub is_primary: Option<bool>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct SignAssetUploadRequest {
     pub folder: Option<String>,
     pub public_id: Option<String>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct SignedUploadResponse {
     pub cloud_name: String,
     pub api_key: String,

@@ -9,6 +9,14 @@ use uuid::Uuid;
 use crate::db::SupplierRepo;
 use crate::models::{CreateSupplierRequest, Supplier, SupplierEvent, UpdateSupplierStatusRequest, UpdateSupplierRequest};
 
+#[utoipa::path(
+    post,
+    path = "/suppliers",
+    request_body = CreateSupplierRequest,
+    responses(
+        (status = 201, description = "Supplier created successfully", body = Supplier)
+    )
+)]
 pub async fn create_supplier(
     tenant: ReqData<TenantContext>,
     db_router: web::Data<DynamicPoolRouter>,
@@ -38,6 +46,16 @@ pub async fn create_supplier(
     }
 }
 
+#[utoipa::path(
+    get,
+    path = "/suppliers/{id}",
+    params(
+        ("id" = Uuid, Path, description = "Supplier ID")
+    ),
+    responses(
+        (status = 200, description = "Supplier found", body = Supplier)
+    )
+)]
 pub async fn get_supplier(
     tenant: ReqData<TenantContext>,
     db_router: web::Data<DynamicPoolRouter>,
@@ -66,6 +84,16 @@ pub async fn get_supplier(
     }
 }
 
+#[utoipa::path(
+    get,
+    path = "/suppliers/owner/{owner_user_id}",
+    params(
+        ("owner_user_id" = Uuid, Path, description = "Owner User ID")
+    ),
+    responses(
+        (status = 200, description = "Owner suppliers", body = Vec<Supplier>)
+    )
+)]
 pub async fn list_owner_suppliers(
     tenant: ReqData<TenantContext>,
     db_router: web::Data<DynamicPoolRouter>,
@@ -93,6 +121,17 @@ pub async fn list_owner_suppliers(
     }
 }
 
+#[utoipa::path(
+    put,
+    path = "/suppliers/{id}/status",
+    params(
+        ("id" = Uuid, Path, description = "Supplier ID")
+    ),
+    request_body = UpdateSupplierStatusRequest,
+    responses(
+        (status = 200, description = "Supplier status updated", body = Supplier)
+    )
+)]
 pub async fn update_supplier_status(
     tenant: ReqData<TenantContext>,
     db_router: web::Data<DynamicPoolRouter>,
@@ -151,10 +190,39 @@ fn publish_supplier_event(tenant_id: Uuid, publisher: &StreamPublisher, event_ty
     );
 }
 
+#[utoipa::path(
+    get,
+    path = "/health",
+    responses(
+        (status = 200, description = "Health check")
+    )
+)]
 pub async fn health() -> impl Responder {
     HttpResponse::Ok().json(serde_json::json!({"status":"ok","service":"supplier-management"}))
 }
 
+#[utoipa::path(
+    get,
+    path = "/metrics",
+    responses(
+        (status = 200, description = "Metrics endpoint")
+    )
+)]
+pub async fn metrics_doc() -> impl Responder {
+    HttpResponse::Ok().finish()
+}
+
+#[utoipa::path(
+    put,
+    path = "/suppliers/{id}",
+    params(
+        ("id" = Uuid, Path, description = "Supplier ID")
+    ),
+    request_body = UpdateSupplierRequest,
+    responses(
+        (status = 200, description = "Supplier updated", body = Supplier)
+    )
+)]
 pub async fn update_supplier(
     tenant: ReqData<TenantContext>,
     db_router: web::Data<DynamicPoolRouter>,

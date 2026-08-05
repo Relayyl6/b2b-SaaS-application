@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
 use uuid::Uuid;
 
-#[derive(Debug, Serialize, Deserialize, FromRow)]
+#[derive(Debug, Serialize, Deserialize, FromRow, utoipa::ToSchema)]
 pub struct Users {
     pub id: Uuid,
     pub tenant_id: Uuid,
@@ -18,7 +18,7 @@ pub struct Users {
     pub updated_at: DateTime<Utc>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, sqlx::Type, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::Type, PartialEq, Eq, utoipa::ToSchema)]
 #[sqlx(type_name = "user_role", rename_all = "lowercase")]
 pub enum UserRole {
     Admin,
@@ -26,7 +26,7 @@ pub enum UserRole {
     User,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, utoipa::ToSchema)]
 pub struct SignUpRequest {
     pub tenant_id: Option<Uuid>,
     pub email: String,
@@ -35,7 +35,7 @@ pub struct SignUpRequest {
     pub role: Option<UserRole>,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, utoipa::ToSchema)]
 pub struct SignInRequest {
     pub tenant_id: Option<Uuid>,
     pub email: String,
@@ -43,13 +43,13 @@ pub struct SignInRequest {
 }
 
 #[allow(dead_code)] // used by sign_out handler via JSON deserialisation
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, utoipa::ToSchema)]
 pub struct SignOutRequest {
     pub token: String,
 }
 
 #[allow(dead_code)] // response type for auth endpoints
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, utoipa::ToSchema)]
 pub struct AuthResponse {
     pub user: Users,
     pub token: String,
@@ -70,7 +70,7 @@ pub struct Claims {
     pub tier: platform::tenant::PricingTier,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, utoipa::ToSchema)]
 pub struct UpdateUserRequest {
     pub full_name: Option<String>,
     pub email: Option<String>,
@@ -80,23 +80,23 @@ pub struct UpdateUserRequest {
 }
 
 #[allow(dead_code)] // used by delete_user handler via JSON deserialisation
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, utoipa::ToSchema)]
 pub struct DeleteUserRequest {
     pub user_id: String,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, utoipa::ToSchema)]
 pub struct ForgotPasswordRequest {
     pub email: String,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, utoipa::ToSchema)]
 pub struct ResetPasswordRequest {
     pub token: String,
     pub new_password: String,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, utoipa::ToSchema)]
 pub struct VerifyEmailRequest {
     pub token: String,
 }

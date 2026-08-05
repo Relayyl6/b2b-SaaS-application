@@ -10,8 +10,33 @@ use platform::{metrics, observability, streams::StreamPublisher};
 use redis::Client;
 use sqlx::postgres::PgPoolOptions;
 use std::env;
+use utoipa::OpenApi;
+use utoipa_swagger_ui::SwaggerUi;
 
 use crate::db::SupplierRepo;
+
+#[derive(OpenApi)]
+#[openapi(
+    paths(
+        handlers::create_supplier,
+        handlers::get_supplier,
+        handlers::list_owner_suppliers,
+        handlers::update_supplier_status,
+        handlers::update_supplier,
+        handlers::health,
+        handlers::metrics_doc
+    ),
+    components(
+        schemas(
+            models::Supplier,
+            models::CreateSupplierRequest,
+            models::UpdateSupplierRequest,
+            models::UpdateSupplierStatusRequest,
+            models::SupplierStatus
+        )
+    )
+)]
+struct ApiDoc;
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
@@ -44,6 +69,10 @@ async fn main() -> std::io::Result<()> {
 
     HttpServer::new(move || {
         App::new()
+            .service(
+                SwaggerUi::new("/swagger-ui/{_:.*}")
+                    .url("/api-docs/openapi.json", ApiDoc::openapi())
+            )
             .wrap(TenantAuthMiddleware::with_redis(redis_client.clone()))
             .app_data(db_router.clone())
             .app_data(repo.clone())

@@ -9,6 +9,16 @@ use crate::models::{
 };
 use crate::stripe::StripeClient;
 
+#[utoipa::path(
+    post,
+    path = "/payments/intents",
+    request_body = CreatePaymentIntentRequest,
+    responses(
+        (status = 201, description = "Payment intent created", body = PaymentIntent),
+        (status = 500, description = "Internal server error")
+    ),
+    security(("BearerAuth" = []), ("ApiKeyAuth" = []))
+)]
 pub async fn create_payment_intent(
     tenant: actix_web::web::ReqData<TenantContext>,
     db_router: actix_web::web::Data<DynamicPoolRouter>,
@@ -53,6 +63,19 @@ let pool = db_router.get_pool(&tenant).await.unwrap();
     }
 }
 
+#[utoipa::path(
+    get,
+    path = "/payments/intents/{id}",
+    params(
+        ("id" = Uuid, Path, description = "Payment intent id")
+    ),
+    responses(
+        (status = 200, description = "Payment intent found", body = PaymentIntent),
+        (status = 404, description = "Payment intent not found"),
+        (status = 500, description = "Internal server error")
+    ),
+    security(("BearerAuth" = []), ("ApiKeyAuth" = []))
+)]
 pub async fn get_payment_intent(
     tenant: actix_web::web::ReqData<TenantContext>,
     db_router: actix_web::web::Data<DynamicPoolRouter>,
@@ -69,6 +92,19 @@ pub async fn get_payment_intent(
     }
 }
 
+#[utoipa::path(
+    post,
+    path = "/payments/intents/{id}/succeed",
+    params(
+        ("id" = Uuid, Path, description = "Payment intent id")
+    ),
+    responses(
+        (status = 200, description = "Payment intent updated", body = PaymentIntent),
+        (status = 404, description = "Payment intent not found"),
+        (status = 500, description = "Internal server error")
+    ),
+    security(("BearerAuth" = []), ("ApiKeyAuth" = []))
+)]
 pub async fn mark_payment_succeeded(
     tenant: actix_web::web::ReqData<TenantContext>,
     db_router: actix_web::web::Data<DynamicPoolRouter>,
@@ -78,6 +114,19 @@ pub async fn mark_payment_succeeded(
     update_status(tenant, db_router, publisher, path.into_inner(), PaymentStatus::Succeeded).await
 }
 
+#[utoipa::path(
+    post,
+    path = "/payments/intents/{id}/fail",
+    params(
+        ("id" = Uuid, Path, description = "Payment intent id")
+    ),
+    responses(
+        (status = 200, description = "Payment intent updated", body = PaymentIntent),
+        (status = 404, description = "Payment intent not found"),
+        (status = 500, description = "Internal server error")
+    ),
+    security(("BearerAuth" = []), ("ApiKeyAuth" = []))
+)]
 pub async fn mark_payment_failed(
     tenant: actix_web::web::ReqData<TenantContext>,
     db_router: actix_web::web::Data<DynamicPoolRouter>,
@@ -87,6 +136,18 @@ pub async fn mark_payment_failed(
     update_status(tenant, db_router, publisher, path.into_inner(), PaymentStatus::Failed).await
 }
 
+#[utoipa::path(
+    post,
+    path = "/payments/webhooks",
+    request_body = PaymentWebhook,
+    responses(
+        (status = 200, description = "Webhook processed", body = PaymentIntent),
+        (status = 400, description = "Invalid payload or signature"),
+        (status = 404, description = "Payment intent not found"),
+        (status = 500, description = "Internal server error")
+    ),
+    security(("BearerAuth" = []), ("ApiKeyAuth" = []))
+)]
 pub async fn payment_webhook(
     db_router: actix_web::web::Data<DynamicPoolRouter>,
     publisher: web::Data<StreamPublisher>,
@@ -173,6 +234,20 @@ fn publish_payment_event(publisher: &StreamPublisher, tenant_id: Uuid, event_typ
     );
 }
 
+#[utoipa::path(
+    post,
+    path = "/payments/intents/{id}/refund",
+    params(
+        ("id" = Uuid, Path, description = "Payment intent id")
+    ),
+    responses(
+        (status = 200, description = "Payment refunded", body = PaymentIntent),
+        (status = 400, description = "Bad Request"),
+        (status = 404, description = "Payment intent not found"),
+        (status = 500, description = "Internal server error")
+    ),
+    security(("BearerAuth" = []), ("ApiKeyAuth" = []))
+)]
 pub async fn refund_payment_endpoint(
     tenant: actix_web::web::ReqData<TenantContext>,
     db_router: actix_web::web::Data<DynamicPoolRouter>,
@@ -200,6 +275,19 @@ pub async fn refund_payment_endpoint(
     }
 }
 
+#[utoipa::path(
+    post,
+    path = "/payments/intents/{id}/transfer",
+    params(
+        ("id" = Uuid, Path, description = "Payment intent id")
+    ),
+    responses(
+        (status = 200, description = "Payment transferred"),
+        (status = 404, description = "Payment intent not found"),
+        (status = 500, description = "Internal server error")
+    ),
+    security(("BearerAuth" = []), ("ApiKeyAuth" = []))
+)]
 pub async fn transfer_payment_endpoint(
     tenant: actix_web::web::ReqData<TenantContext>,
     db_router: actix_web::web::Data<DynamicPoolRouter>,
@@ -234,6 +322,13 @@ pub async fn transfer_payment_endpoint(
     }
 }
 
+#[utoipa::path(
+    get,
+    path = "/health",
+    responses(
+        (status = 200, description = "Health check OK")
+    )
+)]
 pub async fn health() -> impl Responder {
     HttpResponse::Ok().json(serde_json::json!({"status":"ok","service":"payments"}))
 }

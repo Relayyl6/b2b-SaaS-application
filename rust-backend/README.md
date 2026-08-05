@@ -243,8 +243,8 @@ flowchart TD
     Dashboard["Dashboard / Reporting Client"] -->|"GET /analytics?metric=revenue&window=30d"| RestAPI
     RestAPI --> SQLBuilder
     SQLBuilder -->|"Execute Filtered SQL Query"| Hypertables
-    Hypertables -->> RestAPI: Aggregated TimescaleDB Result Set
-    RestAPI -->> Dashboard: JSON Analytics Summary Response
+    Hypertables -->|"Aggregated TimescaleDB Result Set"| RestAPI
+    RestAPI -->|"JSON Analytics Summary Response"| Dashboard
 ```
 
 ---

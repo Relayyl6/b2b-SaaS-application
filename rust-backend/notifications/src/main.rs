@@ -15,8 +15,27 @@ use redis::Client;
 use sqlx::postgres::PgPoolOptions;
 use std::env;
 use tokio::spawn;
+use utoipa::OpenApi;
+use utoipa_swagger_ui::SwaggerUi;
 
 use crate::provider::NotificationProvider;
+
+#[derive(OpenApi)]
+#[openapi(
+    paths(
+        handlers::create_notification,
+        handlers::list_notifications,
+        handlers::get_notification,
+        handlers::mark_notification_read,
+        handlers::register_device,
+        handlers::list_user_devices,
+        handlers::disable_device,
+        handlers::get_preferences,
+        handlers::update_preferences,
+        handlers::health
+    )
+)]
+struct ApiDoc;
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
@@ -72,6 +91,10 @@ async fn main() -> std::io::Result<()> {
     HttpServer::new(move || {
         let tenant_middleware = TenantAuthMiddleware::with_redis(redis_client.get_ref().clone());
         App::new()
+            .service(
+                SwaggerUi::new("/swagger-ui/{_:.*}")
+                    .url("/api-docs/openapi.json", ApiDoc::openapi())
+            )
             .wrap(tenant_middleware)
             .app_data(db_router.clone())
             .app_data(provider.clone())

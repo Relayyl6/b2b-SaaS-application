@@ -1,7 +1,7 @@
 use crate::db::ProductRepo;
 use crate::models::{
     BulkCreateRequest, CreateProductRequest, ProductEvent, RegisterProductAssetRequest,
-    SignAssetUploadRequest, UpdateProductRequest,
+    SignAssetUploadRequest, UpdateProductRequest, SignedUploadResponse,
 };
 use crate::rabbit_pub::publish_example_event;
 use crate::redis_pub::RedisPublisher;
@@ -14,6 +14,16 @@ use std::collections::HashMap;
 use uuid::Uuid;
 
 /// Creates a product and emits best-effort integration events.
+#[utoipa::path(
+    post,
+    path = "/products",
+    request_body = CreateProductRequest,
+    responses(
+        (status = 201, description = "Product created successfully", body = Product),
+        (status = 500, description = "Database error")
+    ),
+    security(("BearerAuth" = []), ("ApiKeyAuth" = []))
+)]
 pub async fn create_product(
     tenant: web::ReqData<TenantContext>,
     db_router: web::Data<DynamicPoolRouter>,
@@ -64,6 +74,16 @@ pub async fn create_product(
 }
 
 /// Returns all products for a supplier and emits view events.
+#[utoipa::path(
+    get,
+    path = "/products/{supplier_id}",
+    params(("supplier_id" = Uuid, Path, description = "Supplier UUID")),
+    responses(
+        (status = 200, description = "List of products by supplier", body = Vec<Product>),
+        (status = 500, description = "Database error")
+    ),
+    security(("BearerAuth" = []), ("ApiKeyAuth" = []))
+)]
 pub async fn get_products_for_supplier(
     tenant: web::ReqData<TenantContext>,
     db_router: web::Data<DynamicPoolRouter>,
@@ -124,6 +144,20 @@ pub async fn get_products_for_supplier(
 }
 
 /// Returns a single product by supplier and product id.
+#[utoipa::path(
+    get,
+    path = "/products/{supplier_id}/{product_id}",
+    params(
+        ("supplier_id" = Uuid, Path, description = "Supplier UUID"),
+        ("product_id" = Uuid, Path, description = "Product UUID")
+    ),
+    responses(
+        (status = 200, description = "Product details", body = Product),
+        (status = 404, description = "Product not found"),
+        (status = 500, description = "Database error")
+    ),
+    security(("BearerAuth" = []), ("ApiKeyAuth" = []))
+)]
 pub async fn get_single_product(
     tenant: web::ReqData<TenantContext>,
     db_router: web::Data<DynamicPoolRouter>,
@@ -147,6 +181,22 @@ pub async fn get_single_product(
 }
 
 /// Updates a product and emits a product.updated event.
+#[utoipa::path(
+    put,
+    path = "/products/{supplier_id}/{product_id}",
+    params(
+        ("supplier_id" = Uuid, Path, description = "Supplier UUID"),
+        ("product_id" = Uuid, Path, description = "Product UUID")
+    ),
+    request_body = UpdateProductRequest,
+    responses(
+        (status = 200, description = "Product updated successfully", body = Product),
+        (status = 400, description = "Bad request"),
+        (status = 404, description = "Product not found"),
+        (status = 500, description = "Database error")
+    ),
+    security(("BearerAuth" = []), ("ApiKeyAuth" = []))
+)]
 pub async fn update_product(
     tenant: web::ReqData<TenantContext>,
     db_router: web::Data<DynamicPoolRouter>,
@@ -208,6 +258,20 @@ pub async fn update_product(
 }
 
 /// Deletes a product, emits product.deleted, and invalidates cache.
+#[utoipa::path(
+    delete,
+    path = "/products/{supplier_id}/{product_id}",
+    params(
+        ("supplier_id" = Uuid, Path, description = "Supplier UUID"),
+        ("product_id" = Uuid, Path, description = "Product UUID")
+    ),
+    responses(
+        (status = 200, description = "Product deleted successfully"),
+        (status = 404, description = "Product not found"),
+        (status = 500, description = "Database error")
+    ),
+    security(("BearerAuth" = []), ("ApiKeyAuth" = []))
+)]
 pub async fn delete_product(
     tenant: web::ReqData<TenantContext>,
     db_router: web::Data<DynamicPoolRouter>,
@@ -263,6 +327,25 @@ pub async fn delete_product(
 }
 
 /// Searches products by optional query parameters.
+#[utoipa::path(
+    get,
+    path = "/products/search",
+    params(
+        ("category" = Option<String>, Query, description = "Category filter"),
+        ("min_price" = Option<f64>, Query, description = "Minimum price"),
+        ("max_price" = Option<f64>, Query, description = "Maximum price"),
+        ("supplier_id" = Option<Uuid>, Query, description = "Supplier UUID"),
+        ("product_id" = Option<Uuid>, Query, description = "Product UUID"),
+        ("limit" = Option<i64>, Query, description = "Max results (1-200)"),
+        ("offset" = Option<i64>, Query, description = "Pagination offset")
+    ),
+    responses(
+        (status = 200, description = "Search results", body = Vec<Product>),
+        (status = 400, description = "Invalid query parameters"),
+        (status = 500, description = "Database error")
+    ),
+    security(("BearerAuth" = []), ("ApiKeyAuth" = []))
+)]
 pub async fn search_products(
     tenant: web::ReqData<TenantContext>,
     db_router: web::Data<DynamicPoolRouter>,
@@ -344,6 +427,16 @@ pub async fn search_products(
 }
 
 /// Creates products in bulk and emits product.created events.
+#[utoipa::path(
+    post,
+    path = "/products/bulk",
+    request_body = BulkCreateRequest,
+    responses(
+        (status = 201, description = "Products created successfully", body = Vec<Product>),
+        (status = 500, description = "Database error")
+    ),
+    security(("BearerAuth" = []), ("ApiKeyAuth" = []))
+)]
 pub async fn bulk_create(
     tenant: web::ReqData<TenantContext>,
     db_router: web::Data<DynamicPoolRouter>,
@@ -386,6 +479,21 @@ pub async fn bulk_create(
 }
 
 /// Stores uploaded asset metadata for a product.
+#[utoipa::path(
+    post,
+    path = "/products/{supplier_id}/{product_id}/assets",
+    params(
+        ("supplier_id" = Uuid, Path, description = "Supplier UUID"),
+        ("product_id" = Uuid, Path, description = "Product UUID")
+    ),
+    request_body = RegisterProductAssetRequest,
+    responses(
+        (status = 201, description = "Asset registered", body = ProductAsset),
+        (status = 404, description = "Product not found"),
+        (status = 500, description = "Database error")
+    ),
+    security(("BearerAuth" = []), ("ApiKeyAuth" = []))
+)]
 pub async fn register_product_asset(
     tenant: web::ReqData<TenantContext>,
     db_router: web::Data<DynamicPoolRouter>,
@@ -416,6 +524,19 @@ pub async fn register_product_asset(
 }
 
 /// Lists stored asset metadata for a product.
+#[utoipa::path(
+    get,
+    path = "/products/{supplier_id}/{product_id}/assets",
+    params(
+        ("supplier_id" = Uuid, Path, description = "Supplier UUID"),
+        ("product_id" = Uuid, Path, description = "Product UUID")
+    ),
+    responses(
+        (status = 200, description = "List of product assets", body = Vec<ProductAsset>),
+        (status = 500, description = "Database error")
+    ),
+    security(("BearerAuth" = []), ("ApiKeyAuth" = []))
+)]
 pub async fn list_product_assets(
     tenant: web::ReqData<TenantContext>,
     db_router: web::Data<DynamicPoolRouter>,
@@ -438,6 +559,21 @@ pub async fn list_product_assets(
 }
 
 /// Deletes product asset metadata by asset id.
+#[utoipa::path(
+    delete,
+    path = "/products/{supplier_id}/{product_id}/assets/{asset_id}",
+    params(
+        ("supplier_id" = Uuid, Path, description = "Supplier UUID"),
+        ("product_id" = Uuid, Path, description = "Product UUID"),
+        ("asset_id" = Uuid, Path, description = "Asset UUID")
+    ),
+    responses(
+        (status = 200, description = "Asset deleted"),
+        (status = 404, description = "Asset not found"),
+        (status = 500, description = "Database error")
+    ),
+    security(("BearerAuth" = []), ("ApiKeyAuth" = []))
+)]
 pub async fn delete_product_asset(
     tenant: web::ReqData<TenantContext>,
     db_router: web::Data<DynamicPoolRouter>,
@@ -467,6 +603,17 @@ pub async fn delete_product_asset(
 }
 
 /// Generates signed Cloudinary upload parameters for direct client uploads.
+#[utoipa::path(
+    post,
+    path = "/assets/cloudinary/sign-upload",
+    request_body = SignAssetUploadRequest,
+    responses(
+        (status = 200, description = "Upload signature generated", body = SignedUploadResponse),
+        (status = 400, description = "Invalid request"),
+        (status = 500, description = "Internal error")
+    ),
+    security(("BearerAuth" = []), ("ApiKeyAuth" = []))
+)]
 pub async fn sign_cloudinary_upload(
     _tenant: web::ReqData<TenantContext>,
     _db_router: web::Data<DynamicPoolRouter>,

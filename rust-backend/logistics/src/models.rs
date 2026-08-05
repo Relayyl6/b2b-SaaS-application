@@ -60,7 +60,7 @@ pub struct UpdateShipmentStatusRequest {
     pub notes: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::IntoParams)]
 pub struct ListShipmentQuery {
     pub status: Option<ShipmentStatus>,
     pub limit: Option<i64>,

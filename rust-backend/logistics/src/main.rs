@@ -14,10 +14,25 @@ use redis::Client as RedisClient;
 use sqlx::postgres::PgPoolOptions;
 use std::env;
 use tokio::spawn;
+use utoipa::OpenApi;
+use utoipa_swagger_ui::SwaggerUi;
 
 use crate::publisher::RedisPublisher;
 use crate::rabbit_pub::RabbitPublisher;
 use crate::redis_sub::listen_to_redis_events;
+
+#[derive(OpenApi)]
+#[openapi(
+    paths(
+        handlers::create_shipment,
+        handlers::get_shipment,
+        handlers::list_supplier_shipments,
+        handlers::update_status,
+        handlers::cancel_shipment_by_order,
+        handlers::health
+    )
+)]
+struct ApiDoc;
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
@@ -89,6 +104,10 @@ async fn main() -> std::io::Result<()> {
 
     HttpServer::new(move || {
         App::new()
+            .service(
+                SwaggerUi::new("/swagger-ui/{_:.*}")
+                    .url("/api-docs/openapi.json", ApiDoc::openapi())
+            )
             .wrap(TenantAuthMiddleware::with_redis(raw_redis_client.clone()))
             .app_data(db_router.clone())
             .app_data(repo.clone())

@@ -21,4 +21,6 @@ tokio.workspace = true
 tokio-native-tls.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
+utoipa = { workspace = true, features = ["uuid", "chrono"] }
 uuid.workspace = true
+utoipa-swagger-ui.workspace = true

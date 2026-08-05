@@ -4,7 +4,7 @@ use serde_json::Value;
 use sqlx::FromRow;
 use uuid::Uuid;
 
-#[derive(Debug, Clone, Serialize, Deserialize, sqlx::Type, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::Type, PartialEq, Eq, utoipa::ToSchema)]
 #[serde(rename_all = "lowercase")]
 #[sqlx(type_name = "supplier_status", rename_all = "lowercase")]
 pub enum SupplierStatus {
@@ -14,7 +14,7 @@ pub enum SupplierStatus {
     Rejected,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow, utoipa::ToSchema)]
 pub struct Supplier {
     pub id: Uuid,
     pub tenant_id: Uuid,
@@ -31,7 +31,7 @@ pub struct Supplier {
     pub updated_at: DateTime<Utc>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, utoipa::ToSchema)]
 pub struct CreateSupplierRequest {
     pub owner_user_id: Uuid,
     pub legal_name: String,
@@ -42,12 +42,12 @@ pub struct CreateSupplierRequest {
     pub platform_fee_percent: Option<f64>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, utoipa::ToSchema)]
 pub struct UpdateSupplierStatusRequest {
     pub status: SupplierStatus,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, utoipa::ToSchema)]
 pub struct UpdateSupplierRequest {
     pub legal_name: Option<String>,
     pub display_name: Option<String>,

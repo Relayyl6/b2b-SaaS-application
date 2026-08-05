@@ -1,3 +1,5 @@
+use utoipa::OpenApi;
+use utoipa_swagger_ui::SwaggerUi;
 use actix_web::{web, App, HttpServer, HttpResponse, Responder};
 use dotenvy::dotenv;
 use serde::{Deserialize, Serialize};
@@ -9,25 +11,32 @@ use uuid::Uuid;
 
 mod auth;
 
-#[derive(Serialize)]
+#[derive(Serialize, utoipa::ToSchema)]
 struct HealthResponse {
     status: String,
 }
 
+#[utoipa::path(
+    get,
+    path = "/health",
+    responses(
+        (status = 200, description = "Health check OK", body = HealthResponse)
+    )
+)]
 async fn health() -> impl Responder {
     HttpResponse::Ok().json(HealthResponse {
         status: "ok".to_string(),
     })
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
 struct CreateTenantRequest {
     name: String,
     email: String,
     tier: Option<String>,
 }
 
-#[derive(Serialize, sqlx::FromRow)]
+#[derive(Serialize, sqlx::FromRow, utoipa::ToSchema)]
 struct TenantResponse {
     id: Uuid,
     name: String,
@@ -35,6 +44,19 @@ struct TenantResponse {
     tier: String,
 }
 
+#[utoipa::path(
+    post,
+    path = "/v1/tenants",
+    request_body = CreateTenantRequest,
+    responses(
+        (status = 201, description = "Tenant created", body = TenantResponse),
+        (status = 500, description = "Internal Server Error")
+    ),
+    security(
+        ("BearerAuth" = []),
+        ("ApiKeyAuth" = [])
+    )
+)]
 async fn create_tenant(
     pool: web::Data<PgPool>,
     req: web::Json<CreateTenantRequest>,
@@ -60,7 +82,7 @@ async fn create_tenant(
     }
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
 struct GenerateKeyRequest {
     tenant_id: Uuid,
     name: String,
@@ -69,7 +91,7 @@ struct GenerateKeyRequest {
     scopes: Vec<String>,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, utoipa::ToSchema)]
 struct GenerateKeyResponse {
     plaintext_key: String, // ONLY TIME THIS IS EVER SHOWN
     prefix: String,
@@ -77,6 +99,19 @@ struct GenerateKeyResponse {
     environment: String,
 }
 
+#[utoipa::path(
+    post,
+    path = "/v1/tenants/keys",
+    request_body = GenerateKeyRequest,
+    responses(
+        (status = 201, description = "Key generated", body = GenerateKeyResponse),
+        (status = 500, description = "Internal Server Error")
+    ),
+    security(
+        ("BearerAuth" = []),
+        ("ApiKeyAuth" = [])
+    )
+)]
 async fn generate_api_key_handler(
     pool: web::Data<PgPool>,
     req: web::Json<GenerateKeyRequest>,
@@ -136,6 +171,10 @@ async fn main() -> std::io::Result<()> {
 
     HttpServer::new(move || {
         App::new()
+            .service(
+                SwaggerUi::new("/swagger-ui/{_:.*}")
+                    .url("/api-docs/openapi.json", ApiDoc::openapi())
+            )
             .app_data(web::Data::new(pool.clone()))
             .route("/health", web::get().to(health))
             .route("/metrics", web::get().to(metrics::metrics_handler))
@@ -146,3 +185,28 @@ async fn main() -> std::io::Result<()> {
     .run()
     .await
 }
+
+#[derive(utoipa::OpenApi)]
+#[openapi(
+    paths(
+        create_tenant,
+        generate_api_key_handler,
+        health,
+        metrics_api_doc
+    ),
+    components(
+        schemas(HealthResponse, CreateTenantRequest, TenantResponse, GenerateKeyRequest, GenerateKeyResponse)
+    )
+)]
+pub struct ApiDoc;
+
+#[utoipa::path(
+    get,
+    path = "/metrics",
+    responses(
+        (status = 200, description = "Prometheus metrics")
+    )
+)]
+#[allow(dead_code)]
+async fn metrics_api_doc() {}
+

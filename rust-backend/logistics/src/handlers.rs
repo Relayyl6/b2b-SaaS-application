@@ -4,12 +4,18 @@ use uuid::Uuid;
 
 use crate::db::LogisticsRepo;
 use crate::models::{
-    CreateShipmentRequest, ListShipmentQuery, LogisticsEvent, UpdateShipmentStatusRequest,
+    CreateShipmentRequest, ListShipmentQuery, LogisticsEvent, Shipment, UpdateShipmentStatusRequest,
 };
 use crate::publisher::RedisPublisher;
 use crate::rabbit_pub::RabbitPublisher;
 
 /// Creates a shipment and publishes logistics.shipment_created.
+#[utoipa::path(
+    post,
+    path = "/shipments",
+    request_body = CreateShipmentRequest,
+    responses((status = 201, description = "Shipment created", body = Shipment))
+)]
 pub async fn create_shipment(
     tenant: web::ReqData<platform::tenant::TenantContext>,
     db_router: web::Data<platform::db_router::DynamicPoolRouter>,
@@ -60,6 +66,12 @@ pub async fn create_shipment(
 }
 
 /// Returns shipment details by id.
+#[utoipa::path(
+    get,
+    path = "/shipments/{shipment_id}",
+    params(("shipment_id" = Uuid, Path, description = "Shipment ID")),
+    responses((status = 200, description = "Shipment found", body = Shipment))
+)]
 pub async fn get_shipment(
     tenant: web::ReqData<platform::tenant::TenantContext>,
     db_router: web::Data<platform::db_router::DynamicPoolRouter>,
@@ -89,6 +101,12 @@ pub async fn get_shipment(
 }
 
 /// Returns supplier shipments using filter and pagination query fields.
+#[utoipa::path(
+    get,
+    path = "/shipments/supplier/{supplier_id}",
+    params(("supplier_id" = Uuid, Path, description = "Supplier ID"), ListShipmentQuery),
+    responses((status = 200, description = "Shipments found", body = Vec<Shipment>))
+)]
 pub async fn list_supplier_shipments(
     tenant: web::ReqData<platform::tenant::TenantContext>,
     db_router: web::Data<platform::db_router::DynamicPoolRouter>,
@@ -121,6 +139,13 @@ pub async fn list_supplier_shipments(
 }
 
 /// Updates shipment status and publishes logistics.shipment_updated.
+#[utoipa::path(
+    put,
+    path = "/shipments/{shipment_id}/status",
+    params(("shipment_id" = Uuid, Path, description = "Shipment ID")),
+    request_body = UpdateShipmentStatusRequest,
+    responses((status = 200, description = "Shipment updated", body = Shipment))
+)]
 pub async fn update_status(
     tenant: web::ReqData<platform::tenant::TenantContext>,
     db_router: web::Data<platform::db_router::DynamicPoolRouter>,
@@ -178,6 +203,12 @@ pub async fn update_status(
 }
 
 /// Cancels an active shipment by order id and publishes logistics.shipment_cancelled.
+#[utoipa::path(
+    put,
+    path = "/shipments/order/{order_id}/cancel",
+    params(("order_id" = Uuid, Path, description = "Order ID")),
+    responses((status = 200, description = "Shipment cancelled", body = Shipment))
+)]
 pub async fn cancel_shipment_by_order(
     tenant: web::ReqData<platform::tenant::TenantContext>,
     db_router: web::Data<platform::db_router::DynamicPoolRouter>,
@@ -230,6 +261,11 @@ pub async fn cancel_shipment_by_order(
     }
 }
 
+#[utoipa::path(
+    get,
+    path = "/health",
+    responses((status = 200, description = "Health check"))
+)]
 pub async fn health() -> impl Responder {
     HttpResponse::Ok().json(serde_json::json!({ "status": "ok", "service": "logistics" }))
 }

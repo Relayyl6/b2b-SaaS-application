@@ -57,7 +57,7 @@ pub struct Event {
 // Note: AnalyticsRequestQuery is documented in OpenAPI schema; runtime handler uses
 // HashMap<String,String> directly for full flexibility over unknown query params.
 #[allow(dead_code)]
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, utoipa::ToSchema)]
 pub struct AnalyticsRequestQuery {
     // REQUIRED
     pub metric: String,
@@ -77,7 +77,7 @@ pub struct AnalyticsRequestQuery {
 // REQUEST BODY STRUCT
 // (POST body for analytics queries)
 // =============================
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, utoipa::ToSchema)]
 pub struct AnalyticsRequestBody {
     pub metric: Option<String>,
     pub window: Option<String>,

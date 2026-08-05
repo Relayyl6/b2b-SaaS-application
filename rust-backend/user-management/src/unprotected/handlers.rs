@@ -11,6 +11,15 @@ use std::env;
 use uuid::Uuid;
 
 // Handler portion
+#[utoipa::path(
+    post,
+    path = "/signup",
+    request_body = SignUpRequest,
+    responses(
+        (status = 201, description = "user successfully signed up", body = crate::models::Users),
+        (status = 400, description = "Bad Request")
+    )
+)]
 pub async fn sign_up_user(
     repo: web::Data<UserRepo>,
     redis_pub: web::Data<platform::streams::StreamPublisher>,
@@ -81,6 +90,15 @@ pub async fn sign_up_user(
     }
 }
 
+#[utoipa::path(
+    post,
+    path = "/signin",
+    request_body = SignInRequest,
+    responses(
+        (status = 200, description = "user successfully signed in", body = crate::models::Users),
+        (status = 401, description = "Unauthorized")
+    )
+)]
 pub async fn sign_in_user(
     repo: web::Data<UserRepo>,
     req: HttpRequest,
@@ -107,6 +125,16 @@ pub async fn sign_in_user(
     }
 }
 
+#[utoipa::path(
+    post,
+    path = "/signout",
+    responses(
+        (status = 200, description = "User Signed out succesfully")
+    ),
+    security(
+        ("BearerAuth" = [])
+    )
+)]
 pub async fn sign_out_user(
     repo: web::Data<UserRepo>,
     redis_client: web::Data<redis::Client>,
@@ -141,6 +169,17 @@ pub async fn sign_out_user(
     }
 }
 
+#[utoipa::path(
+    get,
+    path = "/get_user/{id}",
+    params(
+        ("id" = Uuid, Path, description = "User ID")
+    ),
+    responses(
+        (status = 200, description = "User found", body = crate::models::Users),
+        (status = 404, description = "Not found")
+    )
+)]
 pub async fn get_user(repo: web::Data<UserRepo>, path: web::Path<Uuid>) -> HttpResponse {
     let user_id = path.into_inner();
     match repo.get_user_details(user_id).await {
@@ -153,6 +192,16 @@ pub async fn get_user(repo: web::Data<UserRepo>, path: web::Path<Uuid>) -> HttpR
     }
 }
 
+#[utoipa::path(
+    get,
+    path = "/auth/validate",
+    responses(
+        (status = 204, description = "Token valid")
+    ),
+    security(
+        ("BearerAuth" = [])
+    )
+)]
 pub async fn validate_token(
     repo: web::Data<UserRepo>,
     redis_client: web::Data<redis::Client>,
@@ -286,6 +335,14 @@ pub async fn validate_token(
         .finish()
 }
 
+#[utoipa::path(
+    post,
+    path = "/forgot-password",
+    request_body = crate::models::ForgotPasswordRequest,
+    responses(
+        (status = 200, description = "Email sent")
+    )
+)]
 pub async fn forgot_password(
     repo: web::Data<UserRepo>,
     redis_client: web::Data<redis::Client>,
@@ -336,6 +393,14 @@ pub async fn forgot_password(
     HttpResponse::Ok().json(serde_json::json!({"message": "If that email is in our database, we will send a password reset link."}))
 }
 
+#[utoipa::path(
+    post,
+    path = "/reset-password",
+    request_body = crate::models::ResetPasswordRequest,
+    responses(
+        (status = 200, description = "Password successfully reset")
+    )
+)]
 pub async fn reset_password(
     repo: web::Data<UserRepo>,
     redis_client: web::Data<redis::Client>,
@@ -378,6 +443,14 @@ pub async fn reset_password(
     }
 }
 
+#[utoipa::path(
+    post,
+    path = "/verify-email",
+    request_body = crate::models::VerifyEmailRequest,
+    responses(
+        (status = 200, description = "Email successfully verified")
+    )
+)]
 pub async fn verify_email(
     repo: web::Data<UserRepo>,
     redis_client: web::Data<redis::Client>,

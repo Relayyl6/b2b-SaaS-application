@@ -20,7 +20,7 @@ pub struct Inventory {
     pub updated_at: DateTime<Utc>,
 }
 
-#[derive(Debug, Serialize, Deserialize, Default)]
+#[derive(Debug, Serialize, Deserialize, Default, utoipa::ToSchema)]
 pub struct UpdateStockRequest {
     pub product_id: Uuid,
     pub name: Option<String>,
@@ -51,7 +51,7 @@ pub struct StockUpdateEvent {
     pub available: Option<bool>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct CreateInventoryRequest {
     pub supplier_id: Uuid,
     pub product_id: Uuid,

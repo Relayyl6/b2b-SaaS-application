@@ -1,3 +1,5 @@
+use utoipa::OpenApi;
+use utoipa_swagger_ui::SwaggerUi;
 mod auth;
 mod db;
 mod middleware;
@@ -75,6 +77,10 @@ async fn main() -> std::io::Result<()> {
 
     HttpServer::new(move || {
         App::new()
+            .service(
+                SwaggerUi::new("/swagger-ui/{_:.*}")
+                    .url("/api-docs/openapi.json", ApiDoc::openapi())
+            )
             .app_data(repo.clone())
             .app_data(redis_pub.clone())
             .app_data(redis_client.clone())
@@ -139,3 +145,37 @@ async fn main() -> std::io::Result<()> {
     .run()
     .await
 }
+
+#[derive(utoipa::OpenApi)]
+#[openapi(
+    paths(
+        unprotected_handlers::sign_up_user,
+        unprotected_handlers::sign_in_user,
+        unprotected_handlers::sign_out_user,
+        unprotected_handlers::get_user,
+        unprotected_handlers::validate_token,
+        unprotected_handlers::forgot_password,
+        unprotected_handlers::reset_password,
+        unprotected_handlers::verify_email,
+        protected_handlers::update_user_handler,
+        protected_handlers::delete_user_handler,
+        protected_handlers::admin_stats_handler
+    ),
+    components(
+        schemas(
+            models::Users,
+            models::UserRole,
+            models::SignUpRequest,
+            models::SignInRequest,
+            models::SignOutRequest,
+            models::AuthResponse,
+            models::UpdateUserRequest,
+            models::DeleteUserRequest,
+            models::ForgotPasswordRequest,
+            models::ResetPasswordRequest,
+            models::VerifyEmailRequest
+        )
+    )
+)]
+pub struct ApiDoc;
+

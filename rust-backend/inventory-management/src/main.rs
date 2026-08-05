@@ -10,6 +10,8 @@ use crate::redis_pub::RedisPublisher;
 use crate::redis_sub::listen_to_redis_events;
 use actix_web::{web, App, HttpServer};
 use dotenvy::dotenv;
+use utoipa::OpenApi;
+use utoipa_swagger_ui::SwaggerUi;
 use platform::{metrics, observability};
 use platform::db_router::DynamicPoolRouter;
 use platform::middleware::tenant_middleware::TenantAuthMiddleware;
@@ -19,6 +21,39 @@ use std::env;
 use tokio::spawn;
 
 use crate::worker::reservation_worker;
+
+#[utoipa::path(
+    get,
+    path = "/metrics",
+    responses(
+        (status = 200, description = "Prometheus metrics exported")
+    ),
+    security(("BearerAuth" = []), ("ApiKeyAuth" = []))
+)]
+pub async fn metrics_api_doc() {}
+
+#[derive(OpenApi)]
+#[openapi(
+    paths(
+        handlers::get_inventory,
+        handlers::create_inventory,
+        handlers::get_inventory_item,
+        handlers::update_stock,
+        handlers::delete_product,
+        metrics_api_doc
+    ),
+    components(
+        schemas(
+            models::CreateInventoryRequest,
+            models::UpdateStockRequest
+        )
+    ),
+    security(
+        ("BearerAuth" = []),
+        ("ApiKeyAuth" = [])
+    )
+)]
+pub struct ApiDoc;
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
@@ -90,6 +125,10 @@ async fn main() -> std::io::Result<()> {
     HttpServer::new(move || {
         let tenant_middleware = TenantAuthMiddleware::with_redis(redis_client.get_ref().clone());
         App::new()
+            .service(
+                SwaggerUi::new("/swagger-ui/{_:.*}")
+                    .url("/api-docs/openapi.json", ApiDoc::openapi())
+            )
             .wrap(tenant_middleware)
             .app_data(db_router.clone())
             .app_data(redis_pub.clone())

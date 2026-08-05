@@ -10,6 +10,57 @@ use std::collections::HashMap;
 use platform::tenant::TenantContext;
 use platform::db_router::DynamicPoolRouter;
 
+#[utoipa::path(
+    get,
+    path = "/analytics",
+    params(
+        ("metric" = Option<String>, Query, description = "Metric name"),
+        ("window" = Option<String>, Query, description = "Time window"),
+        ("group_by" = Option<String>, Query, description = "Group by field"),
+        ("aggregate_field" = Option<String>, Query, description = "Aggregate field"),
+        ("limit" = Option<i64>, Query, description = "Limit"),
+        ("order_by" = Option<String>, Query, description = "Order by field")
+    ),
+    responses(
+        (status = 200, description = "Analytics results", body = Vec<serde_json::Value>)
+    )
+)]
+pub async fn get_analytics(
+    db_router: web::Data<DynamicPoolRouter>,
+    tenant: web::ReqData<TenantContext>,
+    q: web::Query<HashMap<String, String>>,
+) -> impl Responder {
+    AnalyticsRepo::analytics_handler(db_router, tenant, q, None).await
+}
+
+#[utoipa::path(
+    post,
+    path = "/analytics",
+    request_body = AnalyticsRequestBody,
+    responses(
+        (status = 200, description = "Analytics results", body = Vec<serde_json::Value>)
+    )
+)]
+pub async fn post_analytics(
+    db_router: web::Data<DynamicPoolRouter>,
+    tenant: web::ReqData<TenantContext>,
+    q: web::Query<HashMap<String, String>>,
+    body: web::Json<AnalyticsRequestBody>,
+) -> impl Responder {
+    AnalyticsRepo::analytics_handler(db_router, tenant, q, Some(body)).await
+}
+
+#[utoipa::path(
+    get,
+    path = "/health",
+    responses(
+        (status = 200, description = "Service is healthy")
+    )
+)]
+pub async fn health() -> impl Responder {
+    HttpResponse::Ok().json(serde_json::json!({"status":"ok","service":"analytics"}))
+}
+
 #[derive(Clone)]
 #[allow(dead_code)]
 pub struct AnalyticsRepo {

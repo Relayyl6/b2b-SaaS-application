@@ -26,7 +26,8 @@ services:
   inventory-management:
     build:
       context: .
-      dockerfile: rust-backend/inventory-management/Dockerfile
+      dockerfile: rust-backend/Dockerfile
+    command: ["inventory-service"]
     environment:
       DATABASE_URL: ${DATABASE_URL}
       REDIS_URL: ${REDIS_URL:-redis://redis:6379}
@@ -42,7 +43,8 @@ services:
   notifications:
     build:
       context: .
-      dockerfile: rust-backend/notifications/Dockerfile
+      dockerfile: rust-backend/Dockerfile
+    command: ["notifications"]
     environment:
       DATABASE_URL: ${DATABASE_URL}
       REDIS_URL: ${REDIS_URL:-redis://redis:6379}
@@ -58,7 +60,8 @@ services:
   user-management:
     build:
       context: .
-      dockerfile: rust-backend/user-management/Dockerfile
+      dockerfile: rust-backend/Dockerfile
+    command: ["user-management"]
     environment:
       DATABASE_URL: ${DATABASE_URL}
       REDIS_URL: ${REDIS_URL:-redis://redis:6379}
@@ -74,7 +77,8 @@ services:
   product-catalog:
     build:
       context: .
-      dockerfile: rust-backend/product-catalog/Dockerfile
+      dockerfile: rust-backend/Dockerfile
+    command: ["product-catalog"]
     environment:
       DATABASE_URL: ${DATABASE_URL}
       REDIS_URL: ${REDIS_URL:-redis://redis:6379}
@@ -90,7 +94,8 @@ services:
   order-service:
     build:
       context: .
-      dockerfile: rust-backend/order-service/Dockerfile
+      dockerfile: rust-backend/Dockerfile
+    command: ["order-service"]
     environment:
       DATABASE_URL: ${DATABASE_URL}
       REDIS_URL: ${REDIS_URL:-redis://redis:6379}
@@ -105,7 +110,8 @@ services:
   logistics:
     build:
       context: .
-      dockerfile: rust-backend/logistics/Dockerfile
+      dockerfile: rust-backend/Dockerfile
+    command: ["logistics"]
     environment:
       DATABASE_URL: ${DATABASE_URL}
       REDIS_URL: ${REDIS_URL:-redis://redis:6379}
@@ -121,7 +127,8 @@ services:
   analytics:
     build:
       context: .
-      dockerfile: rust-backend/analytics/Dockerfile
+      dockerfile: rust-backend/Dockerfile
+    command: ["analytics"]
     environment:
       DATABASE_URL: ${DATABASE_URL}
       REDIS_URL: ${REDIS_URL:-redis://redis:6379}
@@ -137,7 +144,8 @@ services:
   tenant-management:
     build:
       context: .
-      dockerfile: rust-backend/tenant-management/Dockerfile
+      dockerfile: rust-backend/Dockerfile
+    command: ["tenant-management"]
     environment:
       CONTROL_PLANE_DATABASE_URL: ${CONTROL_PLANE_DATABASE_URL}
       TENANT_MANAGEMENT_PORT: 3000
@@ -149,7 +157,8 @@ services:
   supplier-management:
     build:
       context: .
-      dockerfile: rust-backend/supplier-management/Dockerfile
+      dockerfile: rust-backend/Dockerfile
+    command: ["supplier-management"]
     environment:
       DATABASE_URL: ${DATABASE_URL}
       REDIS_URL: ${REDIS_URL:-redis://redis:6379}
@@ -165,7 +174,8 @@ services:
   payments:
     build:
       context: .
-      dockerfile: rust-backend/payments/Dockerfile
+      dockerfile: rust-backend/Dockerfile
+    command: ["payments"]
     environment:
       DATABASE_URL: ${DATABASE_URL}
       REDIS_URL: ${REDIS_URL:-redis://redis:6379}
@@ -198,3 +208,4 @@ services:
 
 volumes:
   pg_data:
+

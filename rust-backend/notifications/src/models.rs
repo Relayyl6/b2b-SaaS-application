@@ -71,7 +71,7 @@ pub struct CreateNotificationRequest {
     pub payload: Option<Value>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::IntoParams)]
 pub struct ListNotificationsQuery {
     pub user_id: Option<Uuid>,
     pub supplier_id: Option<Uuid>,

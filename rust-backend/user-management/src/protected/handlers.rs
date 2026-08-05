@@ -7,6 +7,20 @@ use platform::db_router::DynamicPoolRouter;
 use serde_json;
 use uuid::Uuid;
 
+#[utoipa::path(
+    put,
+    path = "/protected/update/{id}",
+    params(
+        ("id" = Uuid, Path, description = "User ID")
+    ),
+    request_body = UpdateUserRequest,
+    responses(
+        (status = 200, description = "user updated successfully", body = crate::models::Users)
+    ),
+    security(
+        ("BearerAuth" = [])
+    )
+)]
 pub async fn update_user_handler(
     tenant: ReqData<TenantContext>,
     db_router: web::Data<DynamicPoolRouter>,
@@ -109,6 +123,19 @@ pub async fn update_user_handler(
     }
 }
 
+#[utoipa::path(
+    delete,
+    path = "/protected/delete/{id}",
+    params(
+        ("id" = Uuid, Path, description = "User ID")
+    ),
+    responses(
+        (status = 200, description = "User deleted successully")
+    ),
+    security(
+        ("BearerAuth" = [])
+    )
+)]
 pub async fn delete_user_handler(
     tenant: ReqData<TenantContext>,
     db_router: web::Data<DynamicPoolRouter>,
@@ -158,6 +185,16 @@ pub async fn delete_user_handler(
     }
 }
 
+#[utoipa::path(
+    get,
+    path = "/admin/stats",
+    responses(
+        (status = 200, description = "Admin stats retrieved successfully", body = serde_json::Value)
+    ),
+    security(
+        ("BearerAuth" = [])
+    )
+)]
 pub async fn admin_stats_handler(
     tenant: ReqData<TenantContext>,
     db_router: web::Data<DynamicPoolRouter>,

@@ -20,5 +20,7 @@ tracing.workspace = true
 tracing-subscriber.workspace = true
 uuid.workspace = true
 platform.workspace = true
+utoipa.workspace = true
 
 
+utoipa-swagger-ui.workspace = true

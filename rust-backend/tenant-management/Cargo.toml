@@ -27,3 +27,5 @@ hex.workspace = true
 # Key generation specific
 bs58 = "0.5.0"
 rand = "0.8.5"
+utoipa = { workspace = true, features = ["actix_extras", "uuid", "chrono"] }
+utoipa-swagger-ui.workspace = true

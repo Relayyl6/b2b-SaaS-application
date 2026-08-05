@@ -4,7 +4,7 @@ use serde_json::Value;
 use sqlx::FromRow;
 use uuid::Uuid;
 
-#[derive(Debug, Clone, Serialize, Deserialize, sqlx::Type, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::Type, PartialEq, Eq, utoipa::ToSchema)]
 #[serde(rename_all = "snake_case")]
 #[sqlx(type_name = "payment_status", rename_all = "snake_case")]
 pub enum PaymentStatus {
@@ -16,7 +16,7 @@ pub enum PaymentStatus {
     Refunded,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow, utoipa::ToSchema)]
 pub struct PaymentIntent {
     pub id: Uuid,
     pub tenant_id: Uuid,
@@ -36,7 +36,7 @@ pub struct PaymentIntent {
     pub updated_at: DateTime<Utc>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct CreatePaymentIntentRequest {
     pub idempotency_key: String,
     pub order_id: Uuid,
@@ -50,7 +50,7 @@ pub struct CreatePaymentIntentRequest {
     pub metadata: Option<Value>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, utoipa::ToSchema)]
 pub struct PaymentWebhook {
     pub provider_reference: Option<String>,
     pub idempotency_key: Option<String>,

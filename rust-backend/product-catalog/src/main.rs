@@ -14,6 +14,38 @@ use platform::{metrics, observability};
 use redis::Client as RedisClient;
 use sqlx::PgPool;
 use std::env;
+use utoipa::OpenApi;
+use utoipa_swagger_ui::SwaggerUi;
+
+#[derive(OpenApi)]
+#[openapi(
+    paths(
+        handlers::create_product,
+        handlers::get_products_for_supplier,
+        handlers::get_single_product,
+        handlers::update_product,
+        handlers::delete_product,
+        handlers::search_products,
+        handlers::bulk_create,
+        handlers::register_product_asset,
+        handlers::list_product_assets,
+        handlers::delete_product_asset,
+        handlers::sign_cloudinary_upload
+    ),
+    components(
+        schemas(
+            crate::models::Product,
+            crate::models::ProductAsset,
+            crate::models::CreateProductRequest,
+            crate::models::UpdateProductRequest,
+            crate::models::BulkCreateRequest,
+            crate::models::RegisterProductAssetRequest,
+            crate::models::SignAssetUploadRequest,
+            crate::models::SignedUploadResponse
+        )
+    )
+)]
+pub struct ApiDoc;
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
@@ -69,6 +101,10 @@ async fn main() -> std::io::Result<()> {
 
     HttpServer::new(move || {
         App::new()
+            .service(
+                SwaggerUi::new("/swagger-ui/{_:.*}")
+                    .url("/api-docs/openapi.json", ApiDoc::openapi())
+            )
             .wrap(
                 platform::middleware::tenant_middleware::TenantAuthMiddleware::with_redis(redis_client.get_ref().clone()),
             )

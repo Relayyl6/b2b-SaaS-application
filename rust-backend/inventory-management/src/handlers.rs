@@ -14,6 +14,18 @@ pub struct ProductDeletedEvent {
     pub deleted: bool,
 }
 
+#[utoipa::path(
+    get,
+    path = "/inventory/{supplier_id}",
+    params(
+        ("supplier_id" = Uuid, Path, description = "Supplier ID")
+    ),
+    responses(
+        (status = 200, description = "Inventory items retrieved"),
+        (status = 500, description = "Internal server error")
+    ),
+    security(("BearerAuth" = []), ("ApiKeyAuth" = []))
+)]
 pub async fn get_inventory(
     tenant: web::ReqData<platform::tenant::TenantContext>,
     db_router: web::Data<platform::db_router::DynamicPoolRouter>,
@@ -33,6 +45,16 @@ pub async fn get_inventory(
     }
 }
 
+#[utoipa::path(
+    post,
+    path = "/inventory",
+    request_body = CreateInventoryRequest,
+    responses(
+        (status = 201, description = "Inventory item created"),
+        (status = 500, description = "Internal server error")
+    ),
+    security(("BearerAuth" = []), ("ApiKeyAuth" = []))
+)]
 pub async fn create_inventory(
     tenant: web::ReqData<platform::tenant::TenantContext>,
     db_router: web::Data<platform::db_router::DynamicPoolRouter>,
@@ -54,6 +76,20 @@ pub async fn create_inventory(
     }
 }
 
+#[utoipa::path(
+    get,
+    path = "/inventory/{supplier_id}/{product_id}",
+    params(
+        ("supplier_id" = Uuid, Path, description = "Supplier ID"),
+        ("product_id" = Uuid, Path, description = "Product ID")
+    ),
+    responses(
+        (status = 200, description = "Inventory item retrieved"),
+        (status = 404, description = "Item not found"),
+        (status = 500, description = "Internal server error")
+    ),
+    security(("BearerAuth" = []), ("ApiKeyAuth" = []))
+)]
 pub async fn get_inventory_item(
     tenant: web::ReqData<platform::tenant::TenantContext>,
     db_router: web::Data<platform::db_router::DynamicPoolRouter>,
@@ -77,6 +113,20 @@ pub async fn get_inventory_item(
     }
 }
 
+#[utoipa::path(
+    post,
+    path = "/inventory/{supplier_id}/update",
+    params(
+        ("supplier_id" = Uuid, Path, description = "Supplier ID")
+    ),
+    request_body = UpdateStockRequest,
+    responses(
+        (status = 200, description = "Stock updated"),
+        (status = 404, description = "Item not found"),
+        (status = 500, description = "Internal server error")
+    ),
+    security(("BearerAuth" = []), ("ApiKeyAuth" = []))
+)]
 pub async fn update_stock(
     tenant: web::ReqData<platform::tenant::TenantContext>,
     db_router: web::Data<platform::db_router::DynamicPoolRouter>,
@@ -140,6 +190,20 @@ pub async fn update_stock(
     }
 }
 
+#[utoipa::path(
+    delete,
+    path = "/inventory/{supplier_id}/{product_id}",
+    params(
+        ("supplier_id" = Uuid, Path, description = "Supplier ID"),
+        ("product_id" = Uuid, Path, description = "Product ID")
+    ),
+    responses(
+        (status = 200, description = "Product deleted"),
+        (status = 404, description = "Product not found"),
+        (status = 500, description = "Internal server error")
+    ),
+    security(("BearerAuth" = []), ("ApiKeyAuth" = []))
+)]
 pub async fn delete_product(
     tenant: web::ReqData<platform::tenant::TenantContext>,
     db_router: web::Data<platform::db_router::DynamicPoolRouter>,

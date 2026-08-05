@@ -12,10 +12,28 @@ use dotenvy::dotenv;
 use redis::Client;
 use sqlx::postgres::PgPoolOptions;
 use std::env;
+use utoipa::OpenApi;
+use utoipa_swagger_ui::SwaggerUi;
 use platform::middleware::tenant_middleware::TenantAuthMiddleware;
 use platform::db_router::DynamicPoolRouter;
 use tokio::spawn;
 use tracing::{error, subscriber};
+
+#[derive(OpenApi)]
+#[openapi(
+    paths(
+        handlers::get_analytics,
+        handlers::post_analytics,
+        handlers::health
+    ),
+    components(
+        schemas(
+            models::AnalyticsRequestBody,
+            models::AnalyticsRequestQuery
+        )
+    )
+)]
+struct ApiDoc;
 use tracing_subscriber::FmtSubscriber;
 
 // The analytics service might consume events like:
@@ -88,6 +106,10 @@ async fn main() -> std::io::Result<()> {
 
     let _ = HttpServer::new(move || {
         App::new()
+            .service(
+                SwaggerUi::new("/swagger-ui/{_:.*}")
+                    .url("/api-docs/openapi.json", ApiDoc::openapi())
+            )
             .app_data(pool.clone())
             .app_data(repo.clone())
             .app_data(rabbitconsume.clone())
@@ -95,8 +117,16 @@ async fn main() -> std::io::Result<()> {
             .app_data(redis_client.clone())
             .wrap(middleware.clone())
             .route(
+                "/health",
+                web::get().to(handlers::health),
+            )
+            .route(
                 "/analytics",
-                web::post().to(handlers::AnalyticsRepo::analytics_handler),
+                web::get().to(handlers::get_analytics),
+            )
+            .route(
+                "/analytics",
+                web::post().to(handlers::post_analytics),
             )
     })
     .bind(format!("0.0.0.0:{}", port))?

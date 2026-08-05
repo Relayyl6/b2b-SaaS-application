@@ -6,12 +6,52 @@ mod stripe;
 
 use actix_web::{web, App, HttpServer};
 use dotenvy::dotenv;
+use utoipa::OpenApi;
+use utoipa_swagger_ui::SwaggerUi;
 use platform::{metrics, observability, streams::StreamPublisher, middleware::tenant_middleware::TenantAuthMiddleware, db_router::DynamicPoolRouter};
 use sqlx::postgres::PgPoolOptions;
 use std::env;
 use redis::Client as RedisClient;
 
 use crate::db::PaymentRepo;
+
+#[utoipa::path(
+    get,
+    path = "/metrics",
+    responses(
+        (status = 200, description = "Prometheus metrics exported")
+    ),
+    security(("BearerAuth" = []), ("ApiKeyAuth" = []))
+)]
+pub async fn metrics_api_doc() {}
+
+#[derive(OpenApi)]
+#[openapi(
+    paths(
+        handlers::create_payment_intent,
+        handlers::get_payment_intent,
+        handlers::mark_payment_succeeded,
+        handlers::mark_payment_failed,
+        handlers::payment_webhook,
+        handlers::refund_payment_endpoint,
+        handlers::transfer_payment_endpoint,
+        handlers::health,
+        metrics_api_doc
+    ),
+    components(
+        schemas(
+            models::CreatePaymentIntentRequest, 
+            models::PaymentIntent, 
+            models::PaymentWebhook, 
+            models::PaymentStatus
+        )
+    ),
+    security(
+        ("BearerAuth" = []),
+        ("ApiKeyAuth" = [])
+    )
+)]
+pub struct ApiDoc;
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
@@ -60,6 +100,10 @@ async fn main() -> std::io::Result<()> {
 
     HttpServer::new(move || {
         App::new()
+            .service(
+                SwaggerUi::new("/swagger-ui/{_:.*}")
+                    .url("/api-docs/openapi.json", ApiDoc::openapi())
+            )
             .app_data(repo.clone())
             .app_data(db_router.clone())
             .app_data(publisher.clone())

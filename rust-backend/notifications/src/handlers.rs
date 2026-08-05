@@ -3,10 +3,16 @@ use uuid::Uuid;
 
 use crate::db::NotificationRepo;
 use crate::models::{
-    CreateNotificationRequest, ListNotificationsQuery, NotificationChannel, RegisterDeviceRequest, UpdatePreferencesRequest,
+    CreateNotificationRequest, ListNotificationsQuery, Notification, NotificationChannel, NotificationDevice, RegisterDeviceRequest, UpdatePreferencesRequest, UserPreference,
 };
 use crate::provider::NotificationProvider;
 
+#[utoipa::path(
+    post,
+    path = "/notifications",
+    request_body = CreateNotificationRequest,
+    responses((status = 201, description = "Notification created", body = Notification))
+)]
 pub async fn create_notification(
     tenant: web::ReqData<platform::tenant::TenantContext>,
     db_router: web::Data<platform::db_router::DynamicPoolRouter>,
@@ -118,6 +124,12 @@ pub async fn create_notification(
     }
 }
 
+#[utoipa::path(
+    get,
+    path = "/notifications",
+    params(ListNotificationsQuery),
+    responses((status = 200, description = "Notifications listed", body = Vec<Notification>))
+)]
 pub async fn list_notifications(
     tenant: web::ReqData<platform::tenant::TenantContext>,
     db_router: web::Data<platform::db_router::DynamicPoolRouter>,
@@ -141,6 +153,12 @@ pub async fn list_notifications(
     }
 }
 
+#[utoipa::path(
+    get,
+    path = "/notifications/{id}",
+    params(("id" = Uuid, Path, description = "Notification ID")),
+    responses((status = 200, description = "Notification found", body = Notification))
+)]
 pub async fn get_notification(
     tenant: web::ReqData<platform::tenant::TenantContext>,
     db_router: web::Data<platform::db_router::DynamicPoolRouter>,
@@ -165,6 +183,12 @@ pub async fn get_notification(
     }
 }
 
+#[utoipa::path(
+    put,
+    path = "/notifications/{id}/read",
+    params(("id" = Uuid, Path, description = "Notification ID")),
+    responses((status = 200, description = "Notification marked read", body = Notification))
+)]
 pub async fn mark_notification_read(
     tenant: web::ReqData<platform::tenant::TenantContext>,
     db_router: web::Data<platform::db_router::DynamicPoolRouter>,
@@ -192,6 +216,12 @@ pub async fn mark_notification_read(
     }
 }
 
+#[utoipa::path(
+    post,
+    path = "/notification-devices",
+    request_body = RegisterDeviceRequest,
+    responses((status = 201, description = "Device registered", body = NotificationDevice))
+)]
 pub async fn register_device(
     tenant: web::ReqData<platform::tenant::TenantContext>,
     db_router: web::Data<platform::db_router::DynamicPoolRouter>,
@@ -218,6 +248,12 @@ pub async fn register_device(
     }
 }
 
+#[utoipa::path(
+    get,
+    path = "/notification-devices/user/{user_id}",
+    params(("user_id" = Uuid, Path, description = "User ID")),
+    responses((status = 200, description = "User devices", body = Vec<NotificationDevice>))
+)]
 pub async fn list_user_devices(
     tenant: web::ReqData<platform::tenant::TenantContext>,
     db_router: web::Data<platform::db_router::DynamicPoolRouter>,
@@ -241,6 +277,12 @@ pub async fn list_user_devices(
     }
 }
 
+#[utoipa::path(
+    delete,
+    path = "/notification-devices/{id}",
+    params(("id" = Uuid, Path, description = "Device ID")),
+    responses((status = 200, description = "Device disabled", body = NotificationDevice))
+)]
 pub async fn disable_device(
     tenant: web::ReqData<platform::tenant::TenantContext>,
     db_router: web::Data<platform::db_router::DynamicPoolRouter>,
@@ -268,6 +310,12 @@ pub async fn disable_device(
     }
 }
 
+#[utoipa::path(
+    get,
+    path = "/notification-preferences/user/{user_id}",
+    params(("user_id" = Uuid, Path, description = "User ID")),
+    responses((status = 200, description = "User preferences", body = UserPreference))
+)]
 pub async fn get_preferences(
     tenant: web::ReqData<platform::tenant::TenantContext>,
     db_router: web::Data<platform::db_router::DynamicPoolRouter>,
@@ -291,6 +339,13 @@ pub async fn get_preferences(
     }
 }
 
+#[utoipa::path(
+    put,
+    path = "/notification-preferences/user/{user_id}",
+    params(("user_id" = Uuid, Path, description = "User ID")),
+    request_body = UpdatePreferencesRequest,
+    responses((status = 200, description = "User preferences updated", body = UserPreference))
+)]
 pub async fn update_preferences(
     tenant: web::ReqData<platform::tenant::TenantContext>,
     db_router: web::Data<platform::db_router::DynamicPoolRouter>,
@@ -318,6 +373,11 @@ pub async fn update_preferences(
     }
 }
 
+#[utoipa::path(
+    get,
+    path = "/health",
+    responses((status = 200, description = "Health check"))
+)]
 pub async fn health() -> impl Responder {
     HttpResponse::Ok().json(serde_json::json!({ "status": "ok", "service": "notifications" }))
 }
