@@ -21,6 +21,33 @@ use crate::redis_sub::listen_to_redis_events;
 
 use platform::middleware::TenantAuthMiddleware;
 
+use utoipa::OpenApi;
+use utoipa_swagger_ui::SwaggerUi;
+
+#[derive(OpenApi)]
+#[openapi(
+    paths(
+        routes::create_order,
+        routes::get_order,
+        routes::update_status,
+        routes::delete_order,
+    ),
+    components(
+        schemas(
+            models::Order,
+            models::OrderAuditLog,
+            models::CreateOrderRequest,
+            models::UpdateOrderStatus,
+            models::OrderStatus,
+            models::OrderEvent
+        )
+    ),
+    tags(
+        (name = "order-service", description = "Order Lifecycle & Management API")
+    )
+)]
+struct ApiDoc;
+
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
     dotenv().ok();
@@ -81,6 +108,10 @@ async fn main() -> std::io::Result<()> {
             .app_data(redis_client.clone())
             .route("/metrics", web::get().to(metrics::metrics_handler))
             .route("/health", web::get().to(|| async { actix_web::HttpResponse::Ok().body("OK") }))
+            .service(
+                SwaggerUi::new("/swagger-ui/{_:.*}")
+                    .url("/api-docs/openapi.json", ApiDoc::openapi())
+            )
             .service(
                 web::scope("/api/v1")
                     .wrap(TenantAuthMiddleware::with_redis(redis_client.get_ref().clone()))

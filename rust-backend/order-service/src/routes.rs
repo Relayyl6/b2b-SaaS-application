@@ -9,6 +9,19 @@ use platform::tenant::TenantContext;
 
 use crate::models::{CreateOrderRequest, Order, OrderEvent, OrderStatus, UpdateOrderStatus};
 
+#[utoipa::path(
+    post,
+    path = "/api/v1/orders",
+    request_body = CreateOrderRequest,
+    responses(
+        (status = 201, description = "Order created successfully", body = Order),
+        (status = 500, description = "Internal server error")
+    ),
+    security(
+        ("BearerAuth" = []),
+        ("ApiKeyAuth" = [])
+    )
+)]
 #[post("/orders")]
 pub async fn create_order(
     tenant: web::ReqData<TenantContext>,
@@ -98,6 +111,18 @@ pub async fn create_order(
     }
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/v1/orders/{id}",
+    params(
+        ("id" = Uuid, Path, description = "Order UUID")
+    ),
+    responses(
+        (status = 200, description = "Order details", body = Order),
+        (status = 404, description = "Order not found")
+    ),
+    security(("BearerAuth" = []), ("ApiKeyAuth" = []))
+)]
 #[get("/orders/{id}")]
 pub async fn get_order(
     tenant: web::ReqData<TenantContext>,
@@ -134,6 +159,20 @@ pub async fn get_order(
     }
 }
 
+#[utoipa::path(
+    put,
+    path = "/api/v1/orders/{id}/status",
+    params(
+        ("id" = Uuid, Path, description = "Order UUID")
+    ),
+    request_body = UpdateOrderStatus,
+    responses(
+        (status = 200, description = "Order status updated", body = Order),
+        (status = 404, description = "Order not found or version mismatch"),
+        (status = 500, description = "Internal server error")
+    ),
+    security(("BearerAuth" = []), ("ApiKeyAuth" = []))
+)]
 #[put("/orders/{id}/status")]
 pub async fn update_status(
     tenant: web::ReqData<TenantContext>,
@@ -392,6 +431,19 @@ pub async fn update_status(
 // implement route to delete an order, not: only updating orders, cancelling it and deleting it is allowed.
 // TODO: add a order_timestamp to the delete route, after a certain amount o time, orders still pending wil be automatically deleted
 
+#[utoipa::path(
+    delete,
+    path = "/api/v1/orders/{id}/{user_id}",
+    params(
+        ("id" = Uuid, Path, description = "Order UUID"),
+        ("user_id" = Uuid, Path, description = "User UUID")
+    ),
+    responses(
+        (status = 200, description = "Order deleted successfully"),
+        (status = 404, description = "Order not found")
+    ),
+    security(("BearerAuth" = []), ("ApiKeyAuth" = []))
+)]
 #[delete("/orders/{id}/{user_id}")]
 pub async fn delete_order(
     tenant: web::ReqData<TenantContext>,

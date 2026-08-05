@@ -4,7 +4,9 @@ use serde_json;
 use sqlx::FromRow;
 use uuid::Uuid;
 
-#[derive(Serialize, Deserialize, Debug, FromRow)]
+use utoipa::ToSchema;
+
+#[derive(Serialize, Deserialize, Debug, FromRow, ToSchema)]
 pub struct Order {
     pub id: Uuid,
     pub tenant_id: Uuid,
@@ -21,7 +23,7 @@ pub struct Order {
     pub version: i32,
 }
 
-#[derive(Serialize, Deserialize, Debug, FromRow)]
+#[derive(Serialize, Deserialize, Debug, FromRow, ToSchema)]
 pub struct OrderAuditLog {
     pub id: Uuid,
     pub tenant_id: Uuid,
@@ -33,7 +35,7 @@ pub struct OrderAuditLog {
 }
 
 // items is basically the name of whatever you ordered
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, ToSchema)]
 pub struct CreateOrderRequest {
     pub user_id: Uuid,
     pub supplier_id: Uuid,
@@ -43,7 +45,7 @@ pub struct CreateOrderRequest {
     pub items: serde_json::Value,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, ToSchema)]
 pub struct UpdateOrderStatus {
     #[allow(dead_code)] // deserialized from request body; reserved for validation/future use
     pub id: Uuid,
@@ -55,7 +57,7 @@ pub struct UpdateOrderStatus {
     pub expected_version: Option<i32>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, sqlx::Type, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::Type, PartialEq, Eq, ToSchema)]
 #[sqlx(type_name = "order_status", rename_all = "lowercase")]
 #[serde(rename_all = "lowercase")]
 pub enum OrderStatus {
@@ -69,7 +71,7 @@ pub enum OrderStatus {
     Refunded,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, Default)]
+#[derive(Clone, Debug, Serialize, Deserialize, Default, ToSchema)]
 #[serde(default)]
 pub struct OrderEvent {
     pub tenant_id: Option<Uuid>,

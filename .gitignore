@@ -3,6 +3,8 @@
 **/target
 debug/
 release/
+rust-backend/target/
+rust-backend/*/target/
 
 # Environment and Secret Files
 .env
