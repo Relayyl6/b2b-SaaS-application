@@ -2859,3 +2859,40 @@ To make this platform tangible, this is the bare-minimum UI mapping for the Deve
   - "Orders Processed: 8,432 / 10,000"
   - "API Calls: 1.2M / 2M"
 - Invoice history.
+
+## 28. Enterprise SaaS & Commerce Infrastructure Expansion (Stripe/Firebase/Supabase parity)
+
+To position this platform as a true "Backend-as-a-Service for Commerce" (analogous to what Firebase is for mobile apps or Stripe is for payments), the architecture must abstract away heavy commerce complexities into simple configurable primitives. 
+
+### 28.1 Omni-Channel Notifications Engine (Email, SMS, Push)
+Similar to **Twilio / Firebase Cloud Messaging (FCM)**:
+- **Unified Payload API:** A single `POST /notifications` endpoint where tenants can send an order update. The platform automatically determines whether the user prefers Email, SMS, or Push based on their `user_management` preferences.
+- **Provider Fallbacks:** The platform maintains native integrations (e.g., SendGrid for Email, Twilio for SMS). If a primary provider experiences downtime, the system automatically falls back to a secondary provider (e.g., AWS SES, MessageBird) with zero tenant intervention.
+- **Transactional Templates:** Tenants can manage localized HTML email templates directly in the platform dashboard, injecting dynamic variables like `{{order.total}}` or `{{shipping.tracking_url}}` which are parsed at runtime by the `notifications` microservice.
+
+### 28.2 Global Edge Compute & Data Residency
+Similar to **Supabase Edge Functions / Stripe Global Routing**:
+- **Multi-Region RLS (Row Level Security):** Expanding our current PostgreSQL RLS to support Data Residency. European tenants will have their tenant shards physically located in EU data centers (GDPR compliance), while US tenants reside in NA. The `DynamicPoolRouter` in the `platform` crate will automatically route DB connections to the correct regional cluster based on the API key's origin region.
+- **Edge Caching for Product Catalog:** Read-heavy commerce operations (like listing a product catalog) will be replicated to Edge nodes (e.g., Cloudflare Workers or Redis Edge). This guarantees sub-50ms catalog load times globally for end-users, bypassing the origin Postgres database entirely.
+
+### 28.3 The Logistics & Fulfillment Abstraction Layer
+Similar to **Shippo / EasyPost**:
+- **Unified Carrier API:** Tenants don't need to write code for FedEx, UPS, or DHL. They provide their carrier API credentials in the dashboard (BYOP - Bring Your Own Provider), and the `logistics` microservice maps our standard `ShipmentRequest` model to the specific carrier's payload.
+- **Smart Routing & Rate Shopping:** The API will automatically query all connected carriers and return the cheapest or fastest shipping option dynamically during the checkout saga.
+- **Webhook Translation:** Carrier webhooks (e.g., "Out for Delivery") are ingested by the platform, normalized into our standard `LogisticsEvent`, and pushed to the tenant via our unified Webhook system.
+
+### 28.4 Multi-Party Settlement & Sub-Accounts (The "Connect" Model)
+Similar to **Stripe Connect**:
+- **B2B2C Architecture:** For enterprise tenants operating marketplaces, they can programmatically spin up "Sub-Tenants" (vendors). 
+- **Split Payments:** When an order is processed, the `payments` service automatically splits the revenue: X% goes to the Platform (us), Y% goes to the Tenant, and Z% goes to the Sub-Tenant vendor.
+- **Ledger & Reconciliation:** An immutable ledger database tracks all financial movements, handling refunds and chargebacks automatically across the split parties without manual accounting.
+
+### 28.5 Zero-ETL "Bring Your Own Database" (BYOD) Sync
+Similar to **Supabase Wrappers / Stripe Data Pipeline**:
+- **Real-time Warehouse Sync:** Large merchants need their raw data in Snowflake or BigQuery for advanced BI. Instead of forcing them to use our API to extract data, the `analytics` RabbitMQ firehose can be configured to stream events directly into the tenant's own data warehouse.
+- **Zero-Config Streaming:** The tenant simply provides a warehouse connection string in the dashboard, and the platform automatically maintains a 1-to-1 mirror of their catalog, orders, and customer data in their environment.
+
+### 28.6 Unified SDK with Offline-First Caching
+Similar to **Firebase Client SDK**:
+- **Optimistic UI Updates:** The provided TypeScript/Swift SDKs will maintain a local SQLite/IndexedDB cache of the cart and product catalog. If a buyer adds an item to the cart while in a subway tunnel with no cell service, the SDK accepts the action locally and syncs it with the `order-service` via a background sync queue once connectivity is restored.
+- **Real-Time Order Subscriptions:** Utilizing WebSockets mapped to our RabbitMQ events, a frontend client can subscribe to an order ID. The UI will instantly update when the logistics service marks the order as "Shipped" without requiring long-polling.
