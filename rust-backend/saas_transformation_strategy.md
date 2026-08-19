@@ -2922,3 +2922,29 @@ Handling B2B data means handling strict GDPR (Europe), CCPA (California), and SO
 To achieve elite Developer Experience (DX), static documentation is insufficient.
 - **Live/Test Mode Split:** Every tenant receives two sets of keys: `pk_test_...`/`sk_test_...` and `pk_live_...`/`sk_live_...`. The platform strictly isolates Test mode data from Live mode data (using separate DB schemas or a `is_live=false` flag). This allows developers to run integration tests against our production API safely.
 - **Interactive Developer Dashboard:** The developer dashboard will feature a real-time request logger (similar to Stripe's developer logs), displaying the exact request payload, response body, and execution latency for every API call made with their keys, drastically reducing their integration debugging time.
+
+## 34. Usage-Based Metering & Billing Engine (Stripe Billing Parity)
+Transitioning to a true SaaS means moving away from static subscriptions toward dynamic, usage-based pricing.
+- **Decoupled Metering (The Metronome Model):** Microservices should not know about pricing plans. Instead, the API gateway and the internal microservices emit asynchronous "Usage Events" (e.g., `100_api_requests`, `1_order_processed`, `5mb_egress`) to RabbitMQ.
+- **Idempotent Aggregation:** A dedicated billing worker consumes these events, aggregating them in Redis counters, and flushing them hourly into TimescaleDB. 
+- **Automated Invoicing:** At the end of the month, the platform automatically tallies the TimescaleDB usage blocks, applies the tenant's tier multipliers (e.g., $0.05 per order over 1,000), and issues an automated invoice via Stripe.
+
+## 35. AI/ML Transformation & Semantic Commerce
+Modern B2B and B2C platforms require intelligent, context-aware features out of the box (like Algolia or Firebase ML).
+- **Vector Search Catalog (pgvector):** We will augment the standard Postgres `product-catalog` with pgvector embeddings. When a tenant uploads a product, the platform automatically generates semantic text embeddings via an LLM. End-users can search using natural language (e.g., "warm winter jackets for kids") rather than rigid SQL `ILIKE` queries.
+- **Intelligent Fraud Detection:** The `payments` and `order-service` will feed transaction velocity metrics into an ML risk engine. If a sudden surge of orders comes from a high-risk IP block across *any* tenant on the platform, the global model learns and auto-flags those transactions, protecting merchants collectively.
+
+## 36. Observability & SRE (OpenTelemetry & Datadog)
+With 10 decoupled microservices and event-driven RabbitMQ queues, debugging an issue in production requires military-grade observability.
+- **Distributed Tracing (W3C Trace Context):** When a request hits the API Gateway, a unique `trace_id` is generated and attached to the HTTP headers. As the request flows from `Gateway -> order-service -> RabbitMQ -> logistics -> analytics`, every hop logs its execution span bound to that single `trace_id`.
+- **Latency Bottleneck Analysis:** Using an APM tool (like Jaeger or Datadog), we can visually inspect a trace waterfall to immediately identify that "Payment processing took 2.4s, and Order DB insertion took 50ms", allowing laser-focused optimization.
+
+## 37. The "No-Code" Integration Ecosystem (Zapier & Make)
+Enterprise clients require custom workflows. Rather than building every integration manually, we will optimize for no-code tools.
+- **Standardized Webhook Schemas:** We will publish a verified Zapier/Make application. Tenants can instantly connect their SaaS store to 5,000+ external tools (like pushing a new order directly into an Airtable base or triggering a Slack alert) using our certified OAuth2 app.
+- **Event Mesh Filtering:** Tenants can configure granular webhook delivery rules in the dashboard (e.g., "Only send webhooks to Zapier if Order Total > $10,000"), saving webhook egress bandwidth and preventing noise in their automation flows.
+
+## 38. Disaster Recovery & Kubernetes (K8s) Orchestration
+To guarantee 99.99% (Four Nines) uptime SLAs for enterprise clients, the deployment model must evolve beyond Docker Compose.
+- **Blue-Green Deployments:** Using Kubernetes, when we deploy a new version of the `payments` service, the old version remains entirely active. Traffic is slowly shifted to the new version (Canary Release). If error rates spike, K8s automatically routes traffic back to the old version with zero downtime.
+- **Regional Failover (Active-Passive):** The Postgres clusters will maintain a read-replica in a geographically isolated region (e.g., AWS US-East and US-West). If a catastrophic data center outage occurs, the API Gateway automatically fails over routing to the secondary region, resulting in a minimal RPO (Recovery Point Objective).
