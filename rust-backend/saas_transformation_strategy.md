@@ -2896,3 +2896,29 @@ Similar to **Supabase Wrappers / Stripe Data Pipeline**:
 Similar to **Firebase Client SDK**:
 - **Optimistic UI Updates:** The provided TypeScript/Swift SDKs will maintain a local SQLite/IndexedDB cache of the cart and product catalog. If a buyer adds an item to the cart while in a subway tunnel with no cell service, the SDK accepts the action locally and syncs it with the `order-service` via a background sync queue once connectivity is restored.
 - **Real-Time Order Subscriptions:** Utilizing WebSockets mapped to our RabbitMQ events, a frontend client can subscribe to an order ID. The UI will instantly update when the logistics service marks the order as "Shipped" without requiring long-polling.
+
+## 29. API Gateway & Traffic Transformation (Stripe-Level Resilience)
+To transition from an internal application to a global SaaS platform, the API Gateway (currently NGINX) must evolve into a deeply intelligent routing layer (e.g., Kong, Tyk, or a custom Rust proxy).
+- **Tier-Based Rate Limiting:** Rate limits are no longer global. They are bound to the tenant's API key and their subscription tier (e.g., Free: 10 req/s, Growth: 100 req/s, Enterprise: Custom). The gateway utilizes Redis token buckets to enforce this at the edge before traffic hits the microservices.
+- **API Versioning via Headers:** To guarantee backwards compatibility for enterprise clients (like Stripe does), the platform will support header-based versioning (`Platform-Version: 2026-08-19`). If the internal API models change, a middleware layer translates legacy request/response shapes into the current internal standard.
+- **Idempotency Locks:** Every mutating endpoint (`POST`, `PUT`, `DELETE`) requires an `Idempotency-Key` header. The gateway will lock on this key using Redis. If a client's network drops and they retry charging a credit card or creating an order, the gateway intercepts the retry and returns the exact cached response from the first successful request, preventing double-billing or duplicate catalog entries.
+
+## 30. The Extensibility & App Store Model (Shopify/Stripe Apps)
+A true SaaS platform acts as an operating system. To allow 3rd party developers to build extensions:
+- **OAuth 2.0 Scopes & Consent:** We will implement an OAuth2 Authorization Server. Tenants can install "Apps" (e.g., an automated accounting sync tool) and grant them restricted granular scopes like `orders:read` and `payments:read`, without giving up their master API key.
+- **Sync Webhook Subscriptions:** Installed apps automatically register dynamic webhook subscriptions for the tenant, allowing 3rd party developers to listen to events securely.
+
+## 31. Zero Trust Security Transformation
+Currently, microservices sitting behind the API gateway might implicitly trust each other. A public SaaS requires Zero Trust.
+- **Service-to-Service JWTs (mTLS):** All inter-service communication (e.g., `order-service` calling `product-catalog`) must be authenticated. The API gateway issues a short-lived internal JWT containing the specific `tenant_id`, passing it down the stack. If a microservice is ever compromised, it cannot query data outside of the explicit `tenant_id` context bound in the JWT.
+- **Signed Egress Webhooks:** All outbound webhooks sent to tenants or apps are cryptographically signed using HMAC SHA-256 (`Platform-Signature` header). This enables clients to definitively verify that the webhook originated from our infrastructure and prevents spoofing attacks.
+
+## 32. Automated Compliance & Data Sovereignty Engine
+Handling B2B data means handling strict GDPR (Europe), CCPA (California), and SOC2 compliance.
+- **The Right to be Forgotten (Distributed Deletion Saga):** When a tenant deletes a user or their own account, we cannot just delete a row in one database. The platform will dispatch a `TenantDeleted` RabbitMQ event. Every microservice (`analytics`, `inventory`, `payments`) listens to this event and scrubs the tenant's PII from their isolated Postgres shards and TimescaleDB partitions automatically.
+- **PII Masking at the Firehose Level:** Before events hit the `analytics` DB or the data warehouse sync pipeline, a masking layer replaces raw emails and phone numbers with irreversible hashes, ensuring BI tools and data lakes remain free of regulated plaintext PII.
+
+## 33. The Developer Portal & API Sandbox
+To achieve elite Developer Experience (DX), static documentation is insufficient.
+- **Live/Test Mode Split:** Every tenant receives two sets of keys: `pk_test_...`/`sk_test_...` and `pk_live_...`/`sk_live_...`. The platform strictly isolates Test mode data from Live mode data (using separate DB schemas or a `is_live=false` flag). This allows developers to run integration tests against our production API safely.
+- **Interactive Developer Dashboard:** The developer dashboard will feature a real-time request logger (similar to Stripe's developer logs), displaying the exact request payload, response body, and execution latency for every API call made with their keys, drastically reducing their integration debugging time.
