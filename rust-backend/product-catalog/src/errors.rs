@@ -1,0 +1,1 @@
+// Product Catalog specific errors

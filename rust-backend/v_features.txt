@@ -1,0 +1,130 @@
+
+saas_transformation_strategy.md:104:API Base URL:   https://api.commerceplatform.io/v1
+saas_transformation_strategy.md:920:// POST /v1/orders — Success Response
+saas_transformation_strategy.md:1236:    format!("t={},v1={}", timestamp, hex::encode(result.into_bytes()))
+saas_transformation_strategy.md:1271:    signature_header: &str,  // "t=1234,v1=abc123..."
+saas_transformation_strategy.md:1275:    // Parse header: t=timestamp,v1=sig
+saas_transformation_strategy.md:1283:    let sig = parts.get("v1").ok_or(WebhookError::MissingSignature)?;
+saas_transformation_strategy.md:1388:#[post("/v1/orders")]
+saas_transformation_strategy.md:1468:-- GIN index for metadata queries: GET /v1/orders?metadata.campaign_id=summer
+saas_transformation_strategy.md:1546:POST /v1/dashboard/api-keys
+saas_transformation_strategy.md:1572:GET /v1/dashboard/api-keys
+saas_transformation_strategy.md:1575:DELETE /v1/dashboard/api-keys/{key_id}
+saas_transformation_strategy.md:1578:POST /v1/dashboard/api-keys/{key_id}/roll
+saas_transformation_strategy.md:1585:POST /v1/dashboard/webhooks
+saas_transformation_strategy.md:1605:GET /v1/dashboard/webhooks/{webhook_id}/deliveries?status=failed&limit=50
+saas_transformation_strategy.md:1608:POST /v1/dashboard/webhooks/{webhook_id}/deliveries/{delivery_id}/replay
+saas_transformation_strategy.md:1611:POST /v1/dashboard/webhooks/{webhook_id}/test
+saas_transformation_strategy.md:1619:GET /v1/dashboard/config
+saas_transformation_strategy.md:1629:    "api_base_url": "https://api.commerceplatform.io/v1"
+saas_transformation_strategy.md:1657:PATCH /v1/dashboard/config
+saas_transformation_strategy.md:1670:GET /v1/dashboard/usage
+saas_transformation_strategy.md:1685:GET /v1/dashboard/logs?status=500&service=order-service&limit=100
+saas_transformation_strategy.md:1694:      "path": "/v1/orders",
+saas_transformation_strategy.md:1761:- [ ] Build `/v1/dashboard/usage` API backed by TimescaleDB aggregations
+saas_transformation_strategy.md:1765:- [ ] Build all `/v1/dashboard/*` endpoints
+saas_transformation_strategy.md:2109:GET /v1/init
+saas_transformation_strategy.md:2120:      "api_base_url": "https://api.commerceplatform.io/v1"
+saas_transformation_strategy.md:2202:            .get("https://api.commerceplatform.io/v1/init")
+saas_transformation_strategy.md:2454:POST   /v1/products                                    Create product
+saas_transformation_strategy.md:2455:GET    /v1/products/{supplier_id}/{product_id}         Get single product
+saas_transformation_strategy.md:2456:PUT    /v1/products/{supplier_id}/{product_id}         Update product
+saas_transformation_strategy.md:2457:DELETE /v1/products/{supplier_id}/{product_id}         Delete product
+saas_transformation_strategy.md:2458:GET    /v1/products/{supplier_id}                      List products for supplier
+saas_transformation_strategy.md:2459:POST   /v1/products/bulk                               Bulk create products
+saas_transformation_strategy.md:2460:GET    /v1/products/search?q=&category=&min_price=     Search
+saas_transformation_strategy.md:2461:POST   /v1/products/{supplier_id}/{product_id}/assets  Register asset
+saas_transformation_strategy.md:2462:GET    /v1/assets/cloudinary/sign-upload               Get signed upload URL
+saas_transformation_strategy.md:2463:POST   /v1/suppliers                                   Create supplier
+saas_transformation_strategy.md:2464:GET    /v1/suppliers/{id}                              Get supplier
+saas_transformation_strategy.md:2470:POST   /v1/inventory                                   Create inventory record
+saas_transformation_strategy.md:2471:GET    /v1/inventory/{supplier_id}                     List all inventory for supplier
+saas_transformation_strategy.md:2472:GET    /v1/inventory/{supplier_id}/{product_id}        Get stock for specific product
+saas_transformation_strategy.md:2473:POST   /v1/inventory/{supplier_id}/update              Update stock level (+ or -)
+saas_transformation_strategy.md:2474:DELETE /v1/inventory/{supplier_id}/{product_id}        Remove inventory record
+saas_transformation_strategy.md:2480:POST   /v1/orders                   Create order
+saas_transformation_strategy.md:2481:GET    /v1/orders/{id}              Get order by ID
+saas_transformation_strategy.md:2482:PUT    /v1/orders/{id}/status       Update order status
+saas_transformation_strategy.md:2483:DELETE /v1/orders/{id}              Cancel order
+saas_transformation_strategy.md:2489:POST   /v1/payments/intent                 Create PaymentIntent
+saas_transformation_strategy.md:2490:GET    /v1/payments/intent/{id}            Get PaymentIntent status
+saas_transformation_strategy.md:2491:POST   /v1/payments/intent/{id}/confirm    Confirm PaymentIntent
+saas_transformation_strategy.md:2492:POST   /v1/payments/intent/{id}/cancel     Cancel PaymentIntent
+saas_transformation_strategy.md:2493:POST   /v1/payments/intent/{id}/capture    Capture authorized payment
+saas_transformation_strategy.md:2494:POST   /v1/payments/refund/{id}            Create refund
+saas_transformation_strategy.md:2495:POST   /v1/payments/webhook                Stripe webhook receiver (no auth)
+saas_transformation_strategy.md:2501:POST   /v1/notifications                               Send notification
+saas_transformation_strategy.md:2502:GET    /v1/notifications                               List notifications
+saas_transformation_strategy.md:2503:PUT    /v1/notifications/{id}/read                     Mark as read
+saas_transformation_strategy.md:2504:POST   /v1/notification-devices                        Register device (push)
+saas_transformation_strategy.md:2505:PUT    /v1/notification-preferences/user/{user_id}     Update preferences
+saas_transformation_strategy.md:2641:   curl -X POST https://api.commerceplatform.io/v1/products \
+saas_transformation_strategy.md:2774:1. **Frontend:** Calls `POST /v1/checkout/intents` (routed to `order-service`).
+saas_transformation_strategy.md:3883:- Expose an Actix-web endpoint `/api/v1/compliance/report` that aggregates this data into a downloadable, timestamped PDF using a Rust PDF library.
+saas_transformation_strategy.md:3901:- Set headers: `X-Platform-Signature: t=<timestamp>,v1=<hmac_signature>`.
+saas_transformation_strategy.md:4014:*   **API:** `GET /v1/search/semantic?q={query}`. Rust creates an embedding of the query, executes a similarity search `ORDER BY embedding <=> query_embedding LIMIT 20`, and returns JSON.
+saas_transformation_strategy.md:4030:*   **API:** `POST /v1/ai/generate-description` (Payload: `[product_ids]`).
+saas_transformation_strategy.md:4044:*   **Integration:** During the `POST /v1/checkout` flow, before confirming the order, an RPC call is made to the Fraud Microservice over RabbitMQ.
+saas_transformation_strategy.md:4062:*   **API:** `GET /v1/inventory/forecast?product_id=X&days=30` returning projected stock levels.
+saas_transformation_strategy.md:4078:*   **API:** `POST /v1/webhooks/whatsapp`.
+saas_transformation_strategy.md:4094:*   **API:** `POST /v1/search/visual` accepting `multipart/form-data` image uploads.
+saas_transformation_strategy.md:4110:*   **API:** `GET /v1/pricing/resolve?customer_id=X&product_id=Y`.
+saas_transformation_strategy.md:4126:*   **API:** `GET /v1/analytics/at-risk-accounts`.
+saas_transformation_strategy.md:4142:*   **API:** `POST /v1/reviews`.
+saas_transformation_strategy.md:4158:*   **API:** `POST /v1/analytics/ask` (Payload: `{"question": "..."}`).
+saas_transformation_strategy.md:4174:*   **API:** `POST /v1/experiments/{id}/track-conversion`.
+saas_transformation_strategy.md:4190:*   **API:** `GET /v1/logistics/forecast`.
+saas_transformation_strategy.md:4206:*   **API:** `WS /v1/chat`.
+saas_transformation_strategy.md:4222:*   **API:** `POST /v1/shipping/rates`.
+saas_transformation_strategy.md:4238:*   **API:** `POST /v1/catalog/auto-categorize`.
+saas_transformation_strategy.md:4254:*   **API:** `GET /v1/recommendations/fbt?product_id=X`.
+saas_transformation_strategy.md:4270:*   **API:** `POST /v1/disputes/{id}/auto-evaluate`.
+saas_transformation_strategy.md:4302:*   **API:** `POST /v1/images/upload`.
+saas_transformation_strategy.md:4318:*   **API:** `GET /v1/invoices/{id}/summary`.
+saas_transformation_strategy.md:4588:- **Endpoints**: `POST /api/v1/ledger/transactions`
+saas_transformation_strategy.md:4623:- **Integration**: Stripe API `POST /v1/subscription_items/{item}/usage_records` to report aggregated usage periodically.
+saas_transformation_strategy.md:4624:- **Endpoints**: `POST /api/v1/billing/metering/events`
+saas_transformation_strategy.md:4652:- **Integration**: Call Stripe API `POST /v1/transfers` to move funds to the connected account.
+saas_transformation_strategy.md:4653:- **Endpoints**: `POST /api/v1/payments/split-charge`
+saas_transformation_strategy.md:4681:- **Integration**: `POST /v1/invoiceitems` to add the prorated amount, then `POST /v1/invoices` to bill immediately if configured.
+saas_transformation_strategy.md:4682:- **Endpoints**: `POST /api/v1/billing/subscriptions/{id}/upgrade`
+saas_transformation_strategy.md:4709:- **Integration**: `POST /v1/invoices/{invoice}/pay`
+saas_transformation_strategy.md:4710:- **Endpoints**: `GET /api/v1/billing/dunning/status`
+saas_transformation_strategy.md:4737:- **Endpoints**: `GET /api/v1/finance/reports/multicurrency`
+saas_transformation_strategy.md:4763:- **Integration**: `POST /v1/payouts` to send funds to the merchant's bank account.
+saas_transformation_strategy.md:4764:- **Endpoints**: `POST /api/v1/capital/offers/{id}/accept`
+saas_transformation_strategy.md:4790:- **Integration**: Stripe Issuing API (`POST /v1/issuing/cards`, authorization webhooks).
+saas_transformation_strategy.md:4791:- **Endpoints**: `POST /api/v1/issuing/cards`
+saas_transformation_strategy.md:4816:- **Integration**: Stripe Tax API (`POST /v1/tax/calculations`).
+saas_transformation_strategy.md:4817:- **Endpoints**: `POST /api/v1/billing/tax/calculate`
+saas_transformation_strategy.md:4843:- **Integration**: `POST /v1/transfers/{transfer}/reversals`
+saas_transformation_strategy.md:4844:- **Endpoints**: `POST /api/v1/billing/disputes/{id}/accept`
+saas_transformation_strategy.md:4871:- **Integration**: If using Stripe, call `POST /v1/invoices/{invoice}/finalize`.
+saas_transformation_strategy.md:4872:- **Endpoints**: `GET /api/v1/billing/invoices/{id}/pdf`
+saas_transformation_strategy.md:4899:- **Endpoints**: `GET /api/v1/finance/waterfall`
+saas_transformation_strategy.md:4916:- **Integration**: `POST /v1/payment_intents/{intent}/confirm`
+saas_transformation_strategy.md:4934:- **Integration**: `GET /v1/balance` to compare internal ledger against actual Stripe balance.
+saas_transformation_strategy.md:4935:- **Endpoints**: `GET /api/v1/treasury/balances`
+saas_transformation_strategy.md:4961:- **Endpoints**: `POST /api/v1/payments/ach/initiate`
+saas_transformation_strategy.md:4988:- **Endpoints**: `POST /api/v1/billing/orders/{id}/split`
+saas_transformation_strategy.md:5005:- **Integration**: Stripe `POST /v1/invoices`
+saas_transformation_strategy.md:5006:- **Endpoints**: `POST /api/v1/billing/plans`
+saas_transformation_strategy.md:5034:- **Endpoints**: `POST /api/v1/payouts/crypto`
+saas_transformation_strategy.md:5056:- **Endpoints**: `GET /api/v1/finance/audit/verify`
+saas_transformation_strategy.md:5082:- **Integration**: Stripe `GET /v1/balance_transactions`
+saas_transformation_strategy.md:5083:- **Endpoints**: `POST /api/v1/finance/reconciliation/run`
+saas_transformation_strategy.md:5136:  // POST /api/v1/plugins
+saas_transformation_strategy.md:5162:  // POST /api/v1/apikeys
+saas_transformation_strategy.md:5189:  // GET /api/v1/logs?limit=50&status=400
+saas_transformation_strategy.md:5195:      "url": "/v1/orders",
+saas_transformation_strategy.md:5257:  // POST /api/v1/webhooks/test
+saas_transformation_strategy.md:5281:  // POST /api/v1/sandboxes
+saas_transformation_strategy.md:5338:  // POST /api/v1/functions
+saas_transformation_strategy.md:5359:- **API Endpoint**: (The webhook dispatch logic attaches the `B2b-Signature: t=123,v1=abc` header).
+saas_transformation_strategy.md:5383:  // GET /api/v1/config/export?format=terraform
+saas_transformation_strategy.md:5400:  // GET /api/v1/orders/123/events
+saas_transformation_strategy.md:5438:  // GET /api/v1/changelog?since=2024-01-01
+saas_transformation_strategy.md:5475:  // POST /api/v1/auth/saml/acs
+saas_transformation_strategy.md:5509:  // GET /api/v1/metrics/endpoints?app_id=123
+saas_transformation_strategy.md:5512:    "/v1/orders": { "p95_ms": 120, "p99_ms": 300, "error_rate": 0.01 }
+
