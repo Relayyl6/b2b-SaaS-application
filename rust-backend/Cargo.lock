@@ -2577,6 +2577,7 @@ dependencies = [
  "actix-web",
  "chrono",
  "deadpool-redis",
+ "dotenvy",
  "futures-util",
  "jsonwebtoken",
  "opentelemetry",
